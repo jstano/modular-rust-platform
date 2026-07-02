@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/stano-di",
+    "crates/stano-di-macros",
+    "crates/stano-common",
+    "crates/stano-security",
+    "crates/stano-axum",
+    "crates/stano-seaorm",
+    "crates/stano-launcher",
+]

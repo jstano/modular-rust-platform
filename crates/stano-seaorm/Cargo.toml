@@ -1,0 +1,9 @@
+[package]
+name = "stano-seaorm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sea-orm = { version = "1.1.0", features = ["runtime-tokio-rustls", "sqlx-postgres"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+thiserror = "2"

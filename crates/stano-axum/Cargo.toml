@@ -1,0 +1,18 @@
+[package]
+name = "stano-axum"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stano-common = { path = "../stano-common" }
+stano-security = { path = "../stano-security" }
+axum = { version = "0.8.7", features = ["multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tracing = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+anyhow = "1.0"
+tower = "0.5"

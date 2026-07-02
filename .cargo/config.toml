@@ -1,0 +1,2 @@
+[env]
+RUST_BACKTRACE = { value = "1", condition = "debug" }

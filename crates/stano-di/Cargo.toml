@@ -1,0 +1,10 @@
+[package]
+name = "stano-di"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dotenvy = "0.15.7"
+inventory = "0.3"
+thiserror = "2"
+tracing = "0.1.43"
