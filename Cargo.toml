@@ -1,11 +1,14 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/stano-axum",
+    "crates/stano-common",
     "crates/stano-di",
     "crates/stano-di-macros",
-    "crates/stano-common",
-    "crates/stano-security",
-    "crates/stano-axum",
-    "crates/stano-seaorm",
     "crates/stano-launcher",
+    "crates/stano-seaorm",
+    "crates/stano-security",
+    "crates/stano-starter",
+    "crates/stano-starter-rest",
+    "crates/stano-starter-service",
 ]

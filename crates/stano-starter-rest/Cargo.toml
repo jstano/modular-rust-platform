@@ -1,0 +1,10 @@
+[package]
+name = "stano-starter-rest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stano-di       = { path = "../stano-di" }
+stano-axum     = { path = "../stano-axum" }
+stano-launcher = { path = "../stano-launcher" }
+stano-security = { path = "../stano-security" }

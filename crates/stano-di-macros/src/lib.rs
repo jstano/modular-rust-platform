@@ -1,6 +1,42 @@
 use proc_macro::TokenStream;
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
-use syn::{Item, Type, parse_macro_input};
+use syn::{parse_macro_input, Item, Type};
+
+fn stano_di_path() -> TokenStream2 {
+    let candidates: &[(&str, &[&str])] = &[
+        ("stano-di", &[]),
+        ("stano-starter", &[]),
+        ("stano-starter-rest", &[]),
+        ("stano-starter-service", &["stano_starter"]),
+    ];
+
+    for (pkg, extra) in candidates {
+        if let Ok(found) = crate_name(pkg) {
+            let root = match found {
+                FoundCrate::Itself => quote!(crate),
+                FoundCrate::Name(name) => {
+                    let ident = Ident::new(&name, Span::call_site());
+                    quote!(::#ident)
+                }
+            };
+            let extra_idents: Vec<_> = extra.iter()
+                .map(|s| Ident::new(s, Span::call_site()))
+                .collect();
+            if extra_idents.is_empty() {
+                return quote! { #root::stano_di };
+            } else {
+                return quote! { #root #(::#extra_idents)* ::stano_di };
+            }
+        }
+    }
+
+    panic!(
+        "stano-di-macros: add `stano-di`, `stano-starter`, `stano-starter-service`, \
+         or `stano-starter-rest` as a dependency"
+    );
+}
 
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -39,13 +75,15 @@ fn component_trait(trait_def: syn::ItemTrait) -> TokenStream {
         .into();
     }
 
+    let stano_di = stano_di_path();
+
     let expanded = quote! {
         #trait_def
 
-        impl stano_di::DynComponent for dyn #trait_name {}
+        impl #stano_di::DynComponent for dyn #trait_name {}
 
-        impl stano_di::Injectable for dyn #trait_name {
-            fn get_from(container: &stano_di::Container) -> std::sync::Arc<Self> {
+        impl #stano_di::Injectable for dyn #trait_name {
+            fn get_from(container: &#stano_di::Container) -> std::sync::Arc<Self> {
                 container.get_trait::<dyn #trait_name>()
             }
         }
@@ -86,6 +124,7 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> TokenStream {
     let struct_name = &struct_def.ident;
     let struct_vis = &struct_def.vis;
+    let stano_di = stano_di_path();
 
     // Handle unit structs (no fields) and named field structs
     let (field_names, field_types, dependency_ids, get_calls) = match &struct_def.fields {
@@ -117,7 +156,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                     // dyn Trait
                     let inner_type_clone = inner_type.clone();
                     dependency_ids.push(quote! {
-                        stano_di::TraitObject::<#inner_type_clone>::type_id()
+                        #stano_di::TraitObject::<#inner_type_clone>::type_id()
                     });
                     get_calls.push(quote! {
                         container.get_trait::<#inner_type_clone>()
@@ -183,7 +222,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
     // Generate Component impl
     let component_impl = if let Some(trait_ty) = trait_type {
         quote! {
-            impl stano_di::Component for #struct_name {
+            impl #stano_di::Component for #struct_name {
                 fn component_type_name() -> &'static str {
                     stringify!(#struct_name)
                 }
@@ -192,12 +231,12 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                     vec![#(#dependency_ids),*]
                 }
 
-                fn build(container: &stano_di::Container) -> std::sync::Arc<Self> {
+                fn build(container: &#stano_di::Container) -> std::sync::Arc<Self> {
                     std::sync::Arc::new(#new_call)
                 }
 
-                fn register(container: &mut stano_di::Container) {
-                    fn factory(c: &stano_di::Container) -> std::sync::Arc<#trait_ty> {
+                fn register(container: &mut #stano_di::Container) {
+                    fn factory(c: &#stano_di::Container) -> std::sync::Arc<#trait_ty> {
                         #struct_name::build(c) as std::sync::Arc<#trait_ty>
                     }
                     container.register_trait_with_deps::<#trait_ty>(
@@ -210,7 +249,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
         }
     } else {
         quote! {
-            impl stano_di::Component for #struct_name {
+            impl #stano_di::Component for #struct_name {
                 fn component_type_name() -> &'static str {
                     stringify!(#struct_name)
                 }
@@ -219,12 +258,12 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                     vec![#(#dependency_ids),*]
                 }
 
-                fn build(container: &stano_di::Container) -> std::sync::Arc<Self> {
+                fn build(container: &#stano_di::Container) -> std::sync::Arc<Self> {
                     std::sync::Arc::new(#new_call)
                 }
 
-                fn register(container: &mut stano_di::Container) {
-                    fn factory(c: &stano_di::Container) -> std::sync::Arc<Self> {
+                fn register(container: &mut #stano_di::Container) {
+                    fn factory(c: &#stano_di::Container) -> std::sync::Arc<Self> {
                         Self::build(c)
                     }
                     container.register_with_deps::<Self>(
@@ -271,9 +310,9 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
 
         #component_impl
 
-        stano_di::inventory::submit! {
-            stano_di::ServiceRegistration(|container| {
-                <#struct_name as stano_di::Component>::register(container)
+        #stano_di::inventory::submit! {
+            #stano_di::ServiceRegistration(|container| {
+                <#struct_name as #stano_di::Component>::register(container)
             })
         }
     };

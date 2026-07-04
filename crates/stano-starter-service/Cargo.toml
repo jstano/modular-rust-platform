@@ -1,0 +1,8 @@
+[package]
+name = "stano-starter-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stano-starter  = { path = "../stano-starter" }
+stano-security = { path = "../stano-security" }

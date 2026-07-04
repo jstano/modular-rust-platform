@@ -1,0 +1,9 @@
+[package]
+name = "stano-starter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stano-common    = { path = "../stano-common" }
+stano-di        = { path = "../stano-di" }
+stano-di-macros = { path = "../stano-di-macros" }

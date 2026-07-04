@@ -2366,6 +2366,8 @@ dependencies = [
 name = "stano-di-macros"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
  "quote",
  "stano-di",
  "syn 2.0.117",
@@ -2405,6 +2407,33 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "stano-starter"
+version = "0.1.0"
+dependencies = [
+ "stano-common",
+ "stano-di",
+ "stano-di-macros",
+]
+
+[[package]]
+name = "stano-starter-rest"
+version = "0.1.0"
+dependencies = [
+ "stano-axum",
+ "stano-di",
+ "stano-launcher",
+ "stano-security",
+]
+
+[[package]]
+name = "stano-starter-service"
+version = "0.1.0"
+dependencies = [
+ "stano-security",
+ "stano-starter",
 ]
 
 [[package]]
