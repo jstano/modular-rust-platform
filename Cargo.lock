@@ -2335,10 +2335,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stano-common",
- "stano-security",
- "thiserror",
  "tokio",
- "tower",
  "tracing",
 ]
 
@@ -2369,7 +2366,6 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "stano-di",
  "syn 2.0.117",
 ]
 
@@ -2379,14 +2375,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "serde",
  "stano-axum",
  "stano-di",
  "stano-security",
  "tokio",
  "tower-http",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2395,7 +2389,6 @@ version = "0.1.0"
 dependencies = [
  "sea-orm",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
@@ -2404,9 +2397,7 @@ version = "0.1.0"
 dependencies = [
  "jsonwebtoken",
  "serde",
- "serde_json",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
@@ -2416,6 +2407,13 @@ dependencies = [
  "stano-common",
  "stano-di",
  "stano-di-macros",
+]
+
+[[package]]
+name = "stano-starter-domain"
+version = "0.1.0"
+dependencies = [
+ "stano-starter",
 ]
 
 [[package]]
