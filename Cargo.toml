@@ -9,6 +9,7 @@ members = [
     "crates/stano-seaorm",
     "crates/stano-security",
     "crates/stano-starter",
+    "crates/stano-starter-domain",
     "crates/stano-starter-rest",
     "crates/stano-starter-service",
 ]

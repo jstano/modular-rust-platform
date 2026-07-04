@@ -8,6 +8,7 @@ fn stano_di_path() -> TokenStream2 {
     let candidates: &[(&str, &[&str])] = &[
         ("stano-di", &[]),
         ("stano-starter", &[]),
+        ("stano-starter-domain", &["stano_starter"]),
         ("stano-starter-rest", &[]),
         ("stano-starter-service", &["stano_starter"]),
     ];
@@ -33,8 +34,8 @@ fn stano_di_path() -> TokenStream2 {
     }
 
     panic!(
-        "stano-di-macros: add `stano-di`, `stano-starter`, `stano-starter-service`, \
-         or `stano-starter-rest` as a dependency"
+        "stano-di-macros: add `stano-di`, `stano-starter`, `stano-starter-domain`, \
+         `stano-starter-service`, or `stano-starter-rest` as a dependency"
     );
 }
 
