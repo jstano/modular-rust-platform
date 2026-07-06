@@ -14,7 +14,7 @@ stano-launcher (router wiring, middleware, auth, graceful shutdown)
 ┌────────────────────────────────────────────────────┐
 │ stano-di (IoC)   stano-axum (HTTP)   stano-seaorm  │
 │ stano-security (JWT)  stano-common (errors, IDs)   │
-│ stano-di-macros  stano-security-macros             │
+│ stano-di-macros                                    │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut ctx = ApplicationContext::new(env);
     // Register services, repos, etc. here
-    ctx.validate()?;
+    ctx.validate().map_err(|errs| anyhow::anyhow!("{errs:?}"))?;
 
     let routes = RouteGroups {
         public: axum::Router::new().route("/health", get(|| async { "ok" })),
@@ -102,15 +102,15 @@ curl http://localhost:3000/health
 
 ### `stano-launcher` — App Bootstrap
 
-Wires Axum router, applies auth middleware, manages graceful shutdown.
+Wires Axum router with a fixed middleware stack and manages graceful shutdown.
 
 **Key types:** `BootstrapConfig`, `RouteGroups`, `run()`
 
 Provides:
-- Three route tiers (public / protected / admin) with automatic auth layer application
+- Three route tiers (`public`, `protected`, `admin`) for organizational clarity — no automatic auth layer (you implement and apply auth/authz to your routers)
 - Full middleware stack: CORS, timeout, tracing, error logging, panic handling, compression, request-id, body limits, security headers
 - Graceful shutdown on SIGINT/SIGTERM
-- Re-exports auth middleware for manual application if needed
+- Server bootstrap via `run(ctx, routes, config)` listening on configured port
 
 ---
 
@@ -128,11 +128,6 @@ Procedural macros that generate boilerplate:
 - `#[component]` — marks traits as injectable components
 - `#[service(dyn Trait)]` — marks impls as trait object factories
 
-### `stano-security-macros` — Authorization Macros
-Runtime authorization guards:
-- `require_auth!()` — ensures authenticated context
-- `require_admin!()` — checks admin role
-
 ### `stano-common` — Shared Types
 Platform primitives used everywhere:
 - `id_type!` macro — generates typed UUID wrappers (`uuid_v4` and `uuid_v7` variants)
@@ -140,11 +135,10 @@ Platform primitives used everywhere:
 - `DomainError` — business logic error type
 - `domain_err_to_service()` — conversion utility
 
-### `stano-security` — Authentication & Authorization
+### `stano-security` — Authentication
 JWT and security context:
-- `Claims` — generalized JWT payload (app provides the `sub` string)
-- `Role` — enum for `Admin` / `User` roles
-- `SecurityContext` — task-local request identity
+- `Claims<E>` — generalized JWT payload (generic `E` for app-defined extensions: email, role, custom claims)
+- `SecurityContext<E>` — wraps claims for request context
 - `JwtConfig`, `encode_jwt()`, `decode_jwt()` — JWT utilities (ES256)
 
 ### `stano-axum` — HTTP Layer
@@ -158,6 +152,17 @@ Axum extractors, error handling, and middleware:
 SeaORM helpers:
 - `DbConfig` — manages database connection pools
 - `Mapper<Domain>` — trait for bidirectional domain ↔ DB conversion
+
+## Starter Crates (Convenience Re-exports)
+
+Four convenience crates bundle platform crates by app layer, reducing `Cargo.toml` boilerplate:
+
+- **`stano-starter`** — re-exports `stano-common`, `stano-di`, `stano-di-macros` (domain/DI foundation).
+- **`stano-starter-domain`** — thin re-export of `stano-starter` under a domain-focused name.
+- **`stano-starter-service`** — re-exports `stano-starter` + `stano-security` (domain + DI + JWT).
+- **`stano-starter-rest`** — re-exports `stano-di` + `stano-axum` + `stano-launcher` + `stano-security` (HTTP layer).
+
+Each contains no code of its own — use them to simplify dependency declarations in your app's layers. See each crate's `README.md` for details.
 
 ## Usage Patterns
 
@@ -309,18 +314,18 @@ All crates are:
 
 ## Middleware Stack
 
-`stano-launcher` applies this stack in order (outer → inner):
+`stano-launcher` applies this stack in request-processing order (outermost/first-to-see-request → innermost/closest-to-handlers):
 
-1. **CORS** — configurable origins or permissive
-2. **Timeout** — 300s per request
-3. **TraceLayer** — structured logging
-4. **error_logging_middleware** — logs `ApiError` with request context
-5. **CatchPanic** — panics become 500 responses
-6. **Compression** — gzip/brotli/deflate auto-negotiated
-7. **SetRequestId** — injects `x-request-id`
-8. **PropagateRequestId** — propagates upstream
-9. **RequestBodyLimit** — 10 MB max
-10. **Security Headers** — `x-content-type-options: nosniff`, `x-frame-options: DENY`, HSTS
+1. **Security Headers** — `x-content-type-options: nosniff`, `x-frame-options: DENY`, HSTS
+2. **RequestBodyLimit** — 10 MB max
+3. **PropagateRequestId** — propagates upstream
+4. **SetRequestId** — injects `x-request-id`
+5. **Compression** — gzip/brotli/deflate auto-negotiated
+6. **CatchPanic** — panics become 500 responses
+7. **error_logging_middleware** — logs `ApiError` with request context
+8. **TraceLayer** — structured logging
+9. **Timeout** — 300s per request
+10. **CORS** — configurable origins or permissive
 
 ---
 
@@ -331,7 +336,6 @@ All crates are:
 | `stano-launcher` | App bootstrap | `stano-di`, `stano-axum`, `stano-security`, `axum`, `tokio`, `tower-http` |
 | `stano-di` | DI container | `dotenvy`, `thiserror` |
 | `stano-di-macros` | Macros | `proc-macro`, `quote`, `syn` |
-| `stano-security-macros` | Auth macros | `proc-macro`, `quote`, `syn` |
 | `stano-common` | Shared types | `uuid`, `serde`, `thiserror`, `anyhow` |
 | `stano-security` | JWT/Auth | `jsonwebtoken`, `tokio`, `serde` |
 | `stano-axum` | HTTP | `axum`, `serde`, `tokio` |
