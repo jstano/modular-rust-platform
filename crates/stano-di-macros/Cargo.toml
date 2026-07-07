@@ -11,3 +11,7 @@ quote = "1.0.42"
 proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full"] }
 proc-macro-crate = "3"
+
+[dev-dependencies]
+trybuild = "1"
+stano-di = { path = "../stano-di" }

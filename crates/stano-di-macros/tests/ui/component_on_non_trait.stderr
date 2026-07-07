@@ -1,0 +1,5 @@
+error: #[component] can only be used on traits. Structs do not need this annotation — use register() or register_instance() in the container setup.
+ --> tests/ui/component_on_non_trait.rs:4:1
+  |
+4 | struct NotATrait;
+  | ^^^^^^^^^^^^^^^^^

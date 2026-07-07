@@ -17,3 +17,14 @@ tower-http     = { version = "0.6", features = [
 
 tracing = "0.1"
 anyhow  = "1"
+
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt"] }
+tracing-opentelemetry = "0.33"
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "logs", "metrics", "trace"] }
+opentelemetry-appender-tracing = "0.32"
+opentelemetry-semantic-conventions = "0.32"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

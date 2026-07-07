@@ -8,3 +8,6 @@ dotenvy = "0.15.7"
 inventory = "0.3"
 thiserror = "2"
 tracing = "0.1.43"
+
+[dev-dependencies]
+stano-di-macros = { path = "../stano-di-macros" }

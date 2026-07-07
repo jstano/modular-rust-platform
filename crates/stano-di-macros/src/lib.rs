@@ -1,3 +1,26 @@
+//! Proc macros for [`stano-di`](https://docs.rs/stano-di): `#[component]` and
+//! `#[service]` remove the boilerplate of wiring a trait/struct into a
+//! [`stano_di::container::Container`](../stano_di/container/struct.Container.html).
+//!
+//! ```ignore
+//! #[component]
+//! pub trait Greeter: Send + Sync {
+//!     fn greet(&self) -> String;
+//! }
+//!
+//! #[service(dyn Greeter)]
+//! pub struct EnglishGreeter {
+//!     // fields must be Arc<T>, and are resolved from the container
+//! }
+//!
+//! impl Greeter for EnglishGreeter {
+//!     fn greet(&self) -> String {
+//!         "hello".to_string()
+//!     }
+//! }
+//! ```
+#![warn(missing_docs)]
+
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
@@ -5,8 +28,21 @@ use quote::quote;
 use syn::{parse_macro_input, Item, Type};
 
 fn stano_di_path() -> TokenStream2 {
+    // A direct dependency on `stano-di` already resolves to the crate itself,
+    // so no further path segment should be appended (unlike the `stano-starter`
+    // family below, which re-export `stano_di` nested inside themselves via
+    // `pub extern crate stano_di`).
+    if let Ok(found) = crate_name("stano-di") {
+        return match found {
+            FoundCrate::Itself => quote!(crate),
+            FoundCrate::Name(name) => {
+                let ident = Ident::new(&name, Span::call_site());
+                quote!(::#ident)
+            }
+        };
+    }
+
     let candidates: &[(&str, &[&str])] = &[
-        ("stano-di", &[]),
         ("stano-starter", &[]),
         ("stano-starter-domain", &["stano_starter"]),
         ("stano-starter-rest", &[]),
@@ -22,7 +58,8 @@ fn stano_di_path() -> TokenStream2 {
                     quote!(::#ident)
                 }
             };
-            let extra_idents: Vec<_> = extra.iter()
+            let extra_idents: Vec<_> = extra
+                .iter()
                 .map(|s| Ident::new(s, Span::call_site()))
                 .collect();
             if extra_idents.is_empty() {
@@ -39,22 +76,32 @@ fn stano_di_path() -> TokenStream2 {
     );
 }
 
+/// Marks a trait as an injectable component.
+///
+/// Requires the trait to have `Send + Sync` supertraits. Generates
+/// `DynComponent` and `Injectable` impls for `dyn Trait`, so it can be
+/// registered and resolved as a trait object via the container (e.g. by a
+/// struct annotated with `#[service(dyn Trait)]`).
+///
+/// Can only be applied to traits — structs do not need this annotation.
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
+    component_impl(input).into()
+}
 
+fn component_impl(input: Item) -> TokenStream2 {
     match input {
         Item::Trait(trait_def) => component_trait(trait_def),
         other => syn::Error::new_spanned(
             &other,
             "#[component] can only be used on traits. Structs do not need this annotation — use register() or register_instance() in the container setup.",
         )
-        .to_compile_error()
-        .into(),
+        .to_compile_error(),
     }
 }
 
-fn component_trait(trait_def: syn::ItemTrait) -> TokenStream {
+fn component_trait(trait_def: syn::ItemTrait) -> TokenStream2 {
     let trait_name = &trait_def.ident;
 
     // Verify trait has Send + Sync bounds
@@ -72,13 +119,12 @@ fn component_trait(trait_def: syn::ItemTrait) -> TokenStream {
             &trait_def.ident,
             "#[component] trait must have Send + Sync supertraits",
         )
-        .to_compile_error()
-        .into();
+        .to_compile_error();
     }
 
     let stano_di = stano_di_path();
 
-    let expanded = quote! {
+    quote! {
         #trait_def
 
         impl #stano_di::DynComponent for dyn #trait_name {}
@@ -88,41 +134,52 @@ fn component_trait(trait_def: syn::ItemTrait) -> TokenStream {
                 container.get_trait::<dyn #trait_name>()
             }
         }
-    };
-
-    TokenStream::from(expanded)
+    }
 }
 
+/// Marks a struct as a DI-managed component, auto-registering it with the container.
+///
+/// All fields must be typed `Arc<T>` — each is resolved from the container
+/// when the component is built. Generates a `new()` constructor taking the
+/// resolved dependencies as parameters, a `Component` impl, and registers the
+/// component at startup via `inventory::submit!`.
+///
+/// Use `#[service(dyn Trait)]` to register the component as the trait object
+/// implementation of a `#[component]`-annotated trait; use bare `#[service]`
+/// to register it as its own concrete type.
+///
+/// Can only be applied to structs (named-field or unit structs).
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
+    service_impl(TokenStream2::from(attr), input).into()
+}
 
+fn service_impl(attr: TokenStream2, input: Item) -> TokenStream2 {
     match input {
         Item::Struct(struct_def) => {
             let attr_type = if attr.is_empty() {
                 None
             } else {
-                match syn::parse::<Type>(attr) {
+                match syn::parse2::<Type>(attr) {
                     Ok(ty) => Some(ty),
                     Err(e) => {
                         return syn::Error::new_spanned(
                             &struct_def,
                             format!("Failed to parse service trait type: {}", e),
                         )
-                        .to_compile_error()
-                        .into();
+                        .to_compile_error();
                     }
                 }
             };
             service_struct(struct_def, attr_type)
         }
         other => syn::Error::new_spanned(&other, "#[service] can only be used on structs")
-            .to_compile_error()
-            .into(),
+            .to_compile_error(),
     }
 }
 
-fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> TokenStream {
+fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> TokenStream2 {
     let struct_name = &struct_def.ident;
     let struct_vis = &struct_def.vis;
     let stano_di = stano_di_path();
@@ -146,8 +203,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                         &field.ty,
                         "Fields in #[service] structs must be typed as Arc<T>",
                     )
-                    .to_compile_error()
-                    .into();
+                    .to_compile_error();
                 }
                 let inner_type = inner_type.unwrap();
                 field_types.push(field.ty.clone());
@@ -181,8 +237,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                 &struct_def,
                 "#[service] only supports structs with named fields or unit structs",
             )
-            .to_compile_error()
-            .into();
+            .to_compile_error();
         }
     };
 
@@ -264,13 +319,13 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                 }
 
                 fn register(container: &mut #stano_di::Container) {
-                    fn factory(c: &#stano_di::Container) -> std::sync::Arc<Self> {
-                        Self::build(c)
+                    fn factory(c: &#stano_di::Container) -> std::sync::Arc<#struct_name> {
+                        #struct_name::build(c)
                     }
-                    container.register_with_deps::<Self>(
+                    container.register_with_deps::<#struct_name>(
                         factory,
                         stringify!(#struct_name),
-                        Self::dependency_ids(),
+                        #struct_name::dependency_ids(),
                     );
                 }
             }
@@ -300,7 +355,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
         }
     };
 
-    let expanded = quote! {
+    quote! {
         #struct_vis struct #struct_name #generics #reconstructed_fields
 
         impl #struct_name {
@@ -316,9 +371,7 @@ fn service_struct(struct_def: syn::ItemStruct, trait_type: Option<Type>) -> Toke
                 <#struct_name as #stano_di::Component>::register(container)
             })
         }
-    };
-
-    TokenStream::from(expanded)
+    }
 }
 
 fn extract_arc_inner(ty: &Type) -> Option<Type> {
@@ -335,4 +388,279 @@ fn extract_arc_inner(ty: &Type) -> Option<Type> {
 
 fn is_trait_object(ty: &Type) -> bool {
     matches!(ty, Type::TraitObject(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn item(src: &str) -> Item {
+        syn::parse_str(src).unwrap()
+    }
+
+    fn ty(src: &str) -> Type {
+        syn::parse_str(src).unwrap()
+    }
+
+    // `stano_di_path()` reads the real `CARGO_MANIFEST_DIR`/Cargo.toml unless a test
+    // below overrides it, and it's called unconditionally near the top of
+    // `service_struct` (before any field validation) and on the success path of
+    // `component_trait`. Any test that reaches either of those must hold this lock
+    // so it can't run concurrently with a test that's temporarily pointed
+    // `CARGO_MANIFEST_DIR` at a fixture manifest.
+    static MANIFEST_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_manifest_dir() -> std::sync::MutexGuard<'static, ()> {
+        MANIFEST_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn test_extract_arc_inner_returns_inner_type_for_arc() {
+        let inner = extract_arc_inner(&ty("Arc<Logger>")).unwrap();
+        assert_eq!(quote!(#inner).to_string(), quote!(Logger).to_string());
+    }
+
+    #[test]
+    fn test_extract_arc_inner_returns_none_for_non_arc() {
+        assert!(extract_arc_inner(&ty("Logger")).is_none());
+    }
+
+    #[test]
+    fn test_is_trait_object_true_for_dyn_trait() {
+        assert!(is_trait_object(&ty("dyn Greeter")));
+    }
+
+    #[test]
+    fn test_is_trait_object_false_for_concrete_type() {
+        assert!(!is_trait_object(&ty("Logger")));
+    }
+
+    #[test]
+    fn test_component_trait_generates_dyn_component_impl_for_valid_trait() {
+        let _lock = lock_manifest_dir();
+        let Item::Trait(trait_def) =
+            item("pub trait Greeter: Send + Sync { fn greet(&self) -> String; }")
+        else {
+            panic!("expected a trait item");
+        };
+        let expanded = component_trait(trait_def).to_string();
+        assert!(expanded.contains("DynComponent"));
+        assert!(expanded.contains("Injectable"));
+    }
+
+    #[test]
+    fn test_component_trait_rejects_trait_missing_send_and_sync() {
+        let Item::Trait(trait_def) = item("pub trait Greeter { fn greet(&self) -> String; }")
+        else {
+            panic!("expected a trait item");
+        };
+        let expanded = component_trait(trait_def).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Send + Sync"));
+    }
+
+    #[test]
+    fn test_component_trait_rejects_trait_with_only_send() {
+        let Item::Trait(trait_def) = item("pub trait Greeter: Send { fn greet(&self) -> String; }")
+        else {
+            panic!("expected a trait item");
+        };
+        let expanded = component_trait(trait_def).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Send + Sync"));
+    }
+
+    #[test]
+    fn test_component_trait_rejects_trait_with_only_sync() {
+        let Item::Trait(trait_def) = item("pub trait Greeter: Sync { fn greet(&self) -> String; }")
+        else {
+            panic!("expected a trait item");
+        };
+        let expanded = component_trait(trait_def).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Send + Sync"));
+    }
+
+    #[test]
+    fn test_component_rejects_non_trait_item() {
+        let expanded = component_impl(item("pub struct NotATrait;")).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("can only be used on traits"));
+    }
+
+    #[test]
+    fn test_component_impl_dispatches_valid_trait_to_component_trait() {
+        let _lock = lock_manifest_dir();
+        let expanded =
+            component_impl(item("pub trait Greeter: Send + Sync { fn greet(&self) -> String; }"))
+                .to_string();
+        assert!(expanded.contains("DynComponent"));
+        assert!(expanded.contains("Injectable"));
+    }
+
+    #[test]
+    fn test_service_struct_generates_component_impl_for_unit_struct() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget;") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("Component for Widget"));
+        assert!(expanded.contains("fn build"));
+    }
+
+    #[test]
+    fn test_service_struct_without_trait_type_uses_register_with_deps() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget;") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("register_with_deps"));
+        assert!(!expanded.contains("register_trait_with_deps"));
+    }
+
+    #[test]
+    fn test_service_struct_with_concrete_arc_field_uses_typeid_and_get() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget { logger: Arc<Logger> }") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("TypeId :: of"));
+        assert!(expanded.contains("container . get ::"));
+        assert!(!expanded.contains("get_trait"));
+    }
+
+    #[test]
+    fn test_service_struct_rejects_non_arc_field() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget { logger: Logger }") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("must be typed as Arc"));
+    }
+
+    #[test]
+    fn test_service_struct_with_trait_object_field_uses_get_trait() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget { greeter: Arc<dyn Greeter> }")
+        else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("get_trait"));
+        assert!(expanded.contains("TraitObject"));
+    }
+
+    #[test]
+    fn test_service_struct_with_trait_type_registers_via_register_trait_with_deps() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget;") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, Some(ty("dyn Greeter"))).to_string();
+        assert!(expanded.contains("register_trait_with_deps"));
+    }
+
+    #[test]
+    fn test_service_struct_rejects_tuple_struct() {
+        let _lock = lock_manifest_dir();
+        let Item::Struct(struct_def) = item("pub struct Widget(u32);") else {
+            panic!("expected a struct item");
+        };
+        let expanded = service_struct(struct_def, None).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("named fields or unit structs"));
+    }
+
+    #[test]
+    fn test_service_rejects_non_struct_item() {
+        let expanded =
+            service_impl(TokenStream2::new(), item("pub trait NotAStruct {}")).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("can only be used on structs"));
+    }
+
+    #[test]
+    fn test_service_rejects_bad_trait_type_token() {
+        let attr = TokenStream2::from_str("123").unwrap();
+        let expanded = service_impl(attr, item("pub struct Widget;")).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Failed to parse service trait type"));
+    }
+
+    #[test]
+    fn test_service_impl_with_empty_attr_dispatches_to_service_struct() {
+        let _lock = lock_manifest_dir();
+        let expanded = service_impl(TokenStream2::new(), item("pub struct Widget;")).to_string();
+        assert!(!expanded.contains("compile_error"));
+        assert!(expanded.contains("Component for Widget"));
+        assert!(expanded.contains("register_with_deps"));
+    }
+
+    #[test]
+    fn test_service_impl_with_valid_trait_attr_dispatches_to_service_struct() {
+        let _lock = lock_manifest_dir();
+        let attr = TokenStream2::from_str("dyn Greeter").unwrap();
+        let expanded = service_impl(attr, item("pub struct Widget;")).to_string();
+        assert!(!expanded.contains("compile_error"));
+        assert!(expanded.contains("register_trait_with_deps"));
+    }
+
+    #[test]
+    fn test_stano_di_path_resolves_to_dev_dependency() {
+        let _lock = lock_manifest_dir();
+        let path = stano_di_path().to_string();
+        assert!(path.contains("stano_di"));
+    }
+
+    struct ManifestDirGuard {
+        original: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ManifestDirGuard {
+        fn set(path: &str) -> Self {
+            let lock = lock_manifest_dir();
+            let original = std::env::var_os("CARGO_MANIFEST_DIR");
+            unsafe {
+                std::env::set_var("CARGO_MANIFEST_DIR", path);
+            }
+            ManifestDirGuard {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for ManifestDirGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.original {
+                    Some(v) => std::env::set_var("CARGO_MANIFEST_DIR", v),
+                    None => std::env::remove_var("CARGO_MANIFEST_DIR"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_stano_di_path_falls_back_to_stano_starter_family() {
+        let manifest_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stano_starter_consumer");
+        let _guard = ManifestDirGuard::set(manifest_dir);
+        let path = stano_di_path().to_string();
+        assert!(path.contains("stano_di"));
+    }
+
+    #[test]
+    fn test_stano_di_path_panics_when_no_known_dependency_present() {
+        let manifest_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/no_di_consumer");
+        let _guard = ManifestDirGuard::set(manifest_dir);
+        let result = std::panic::catch_unwind(stano_di_path);
+        assert!(result.is_err());
+    }
 }

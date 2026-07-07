@@ -1,3 +1,17 @@
+/// Generates a typed UUID newtype wrapper named `$name`.
+///
+/// Use `uuid_v4` for random IDs (nonces, transient identifiers); use `uuid_v7`
+/// for sortable, time-ordered IDs (primary entity IDs) — `uuid_v7` additionally
+/// derives `PartialOrd`/`Ord` since v7 UUIDs sort chronologically.
+///
+/// The generated type has `new()` (generates a fresh UUID), `from(Uuid)`,
+/// `as_uuid(&self) -> &Uuid`, `FromStr`, and `Display`.
+///
+/// ```
+/// stano_common::id_type!(UserId, uuid_v7);
+/// let id = UserId::new();
+/// assert_eq!(id, UserId::from(*id.as_uuid()));
+/// ```
 #[macro_export]
 macro_rules! id_type {
     ($name:ident, uuid_v4) => {
@@ -124,5 +138,29 @@ mod tests {
         let id = TestIdV7::from(raw);
         assert_eq!(id.as_uuid(), &raw);
         assert_eq!(id.to_string(), raw.to_string());
+    }
+
+    #[test]
+    fn v4_from_str_round_trips_with_display() {
+        let original = TestIdV4::new();
+        let parsed: TestIdV4 = original.to_string().parse().unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn v4_from_str_invalid_string_returns_err() {
+        assert!("not-a-uuid".parse::<TestIdV4>().is_err());
+    }
+
+    #[test]
+    fn v7_from_str_round_trips_with_display() {
+        let original = TestIdV7::new();
+        let parsed: TestIdV7 = original.to_string().parse().unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn v7_from_str_invalid_string_returns_err() {
+        assert!("not-a-uuid".parse::<TestIdV7>().is_err());
     }
 }

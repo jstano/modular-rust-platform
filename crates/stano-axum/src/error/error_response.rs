@@ -23,6 +23,8 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
+    /// Construct a response with no `details` or `request_id`; add those via
+    /// [`ErrorResponse::with_details`]/[`ErrorResponse::with_request_id`].
     pub fn new(
         status: u16,
         code: impl Into<Cow<'static, str>>,
@@ -37,11 +39,13 @@ impl ErrorResponse {
         }
     }
 
+    /// Attach optional detailed error information.
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
         self.details = Some(details.into());
         self
     }
 
+    /// Attach a request ID for correlation with logs.
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
         self.request_id = Some(request_id.into());
         self

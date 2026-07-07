@@ -1,0 +1,5 @@
+error: Failed to parse service trait type: expected identifier
+ --> tests/ui/service_bad_trait_type_token.rs:4:1
+  |
+4 | struct Widget;
+  | ^^^^^^^^^^^^^^

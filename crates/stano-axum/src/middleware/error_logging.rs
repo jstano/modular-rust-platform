@@ -33,3 +33,80 @@ pub async fn error_logging_middleware(request: Request, next: Next) -> Response 
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ApiError;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::{middleware, Router};
+    use stano_common::ServiceError;
+    use tower::util::ServiceExt;
+
+    #[tokio::test]
+    async fn test_error_logging_passes_through_response_without_api_error() {
+        let app = Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(middleware::from_fn(error_logging_middleware));
+
+        let response = app
+            .oneshot(Request::builder().uri("/ok").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_error_logging_logs_when_response_has_api_error_extension() {
+        let app = Router::new()
+            .route(
+                "/fail",
+                get(|| async { ApiError::from(ServiceError::NotFound) }),
+            )
+            .layer(middleware::from_fn(error_logging_middleware));
+
+        let response = app
+            .oneshot(Request::builder().uri("/fail").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_error_logging_handles_missing_x_request_id_header() {
+        let app = Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(middleware::from_fn(error_logging_middleware));
+
+        let response = app
+            .oneshot(Request::builder().uri("/ok").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_error_logging_handles_present_x_request_id_header() {
+        let app = Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(middleware::from_fn(error_logging_middleware));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ok")
+                    .header("x-request-id", "abc-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}

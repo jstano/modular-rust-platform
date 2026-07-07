@@ -1,0 +1,5 @@
+error: Fields in #[service] structs must be typed as Arc<T>
+ --> tests/ui/service_with_non_arc_field.rs:5:12
+  |
+5 |     count: i32,
+  |            ^^^

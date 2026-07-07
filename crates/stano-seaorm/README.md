@@ -15,7 +15,7 @@ sea-orm = { version = "1.1", features = ["runtime-tokio-rustls", "sqlx-postgres"
 ### Database Configuration
 
 - **`DbConfig`** — wraps a SeaORM `DatabaseConnection`.
-  - `async fn from_url(database_url: &str) -> Result<Self, DbConfigError>` — create a pool from a Postgres URL. Hardcoded settings:
+  - `async fn from_url(database_url: &str, tracing_config: QueryTracingConfig) -> Result<Self, DbConfigError>` — create a pool from a Postgres URL. Hardcoded pool settings:
     - **Max connections:** 100
     - **Min connections:** 5
     - **Connect timeout:** 30 seconds
@@ -26,6 +26,19 @@ sea-orm = { version = "1.1", features = ["runtime-tokio-rustls", "sqlx-postgres"
 
 - **`DbConfigError`** — error type:
   - `ConnectionFailed(String)` — failed to connect to the database.
+
+### Query Tracing
+
+- **`QueryTracingConfig`** — per-query tracing instrumentation settings, passed to `DbConfig::from_url`.
+  - `enabled: bool` — when `false` (the default), no metric callback is installed and behavior is unchanged from before this instrumentation existed.
+  - `include_statement: bool` — whether `db.statement` (the SQL text) is attached to emitted events. Defaults to `true` — SeaORM's `statement.sql` is the parameterized query text (`$1`/`$2` placeholders), not literal parameter values.
+  - `slow_query_threshold: Duration` — queries at or above this duration are logged at `warn` ("slow query") instead of `debug`. Defaults to 200ms.
+
+- **`query_tracing_config_from_env(environment: &dyn Environment) -> QueryTracingConfig`** — reads `STANO_DB_TRACING_ENABLED`, `STANO_DB_TRACING_INCLUDE_STATEMENT`, `STANO_DB_SLOW_QUERY_MS`, falling back to `QueryTracingConfig::default()`'s values when unset.
+
+When enabled, `from_url` installs a `set_metric_callback` on the SeaORM connection that emits a `stano_seaorm::query` tracing event per SQL statement, once it completes, with fields `db.system` (`"postgresql"`), `db.operation` (parsed first SQL token, e.g. `SELECT`/`INSERT`), `db.statement` (gated by `include_statement`), and `elapsed_ms`. Level carries status: `error` on failure, `warn` on slow queries, `debug` otherwise. SeaORM's own `sqlx_logging` is disabled when tracing is enabled, to avoid duplicate log lines for the same query.
+
+**Limitation:** this is a `tracing::event!`, not a real span — SeaORM's metric callback fires only after the query completes, so there's no live await to wrap with a span. Unlike Java's OpenTelemetry javaagent JDBC instrumentation (which produces a true per-query span via bytecode weaving), this gives you an event that's still exported via OTLP logs (and attached to any ambient parent span, if one exists), but not a standalone trace span.
 
 ### Entity Mapping
 
@@ -46,11 +59,16 @@ sea-orm = { version = "1.1", features = ["runtime-tokio-rustls", "sqlx-postgres"
 ## Usage Example
 
 ```rust
-use stano_seaorm::{DbConfig, Mapper};
+use stano_seaorm::{DbConfig, Mapper, QueryTracingConfig};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-// 1. Set up the database connection.
-let db = DbConfig::from_url("postgres://user:pass@localhost/mydb").await?;
+// 1. Set up the database connection. Pass `QueryTracingConfig::default()` (tracing
+//    disabled) to keep prior behavior, or build one from the environment.
+let db = DbConfig::from_url(
+    "postgres://user:pass@localhost/mydb",
+    QueryTracingConfig::default(),
+)
+.await?;
 let conn = db.connection();
 
 // 2. Define your domain entity (in your app's domain crate).
@@ -112,3 +130,4 @@ pub async fn find_user_by_id(id: uuid::Uuid, conn: &DbConnection) -> Result<Opti
 - **SeaORM re-export** — full `sea_orm` crate is re-exported; use it for entity generation, query construction, and migrations.
 - **ORM migration** — `Mapper` is a convention, not middleware; you must manually implement it for each entity to bridge domain and database layers.
 - **No feature flags** — Postgres via sqlx is always enabled (not optional).
+- **Query tracing is opt-in per `DbConfig`** — `from_url` requires a `QueryTracingConfig` argument; pass `QueryTracingConfig::default()` for no instrumentation (matching behavior before this feature existed), or `query_tracing_config_from_env(...)` to enable it via environment variables.

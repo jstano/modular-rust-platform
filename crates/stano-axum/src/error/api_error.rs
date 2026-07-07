@@ -1,8 +1,8 @@
 use super::error_response::ErrorResponse;
-use axum::Json;
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use stano_common::ServiceError;
 use std::sync::Arc;
 
@@ -11,22 +11,31 @@ use std::sync::Arc;
 pub enum ApiError {
     /// JSON deserialization failed
     JsonExtraction {
+        /// HTTP status Axum's rejection suggested for this failure.
         status: StatusCode,
+        /// Axum's rejection body text, included as `details` in the response.
         body_text: String,
+        /// The concrete `JsonRejection` variant name, for diagnostics.
         rejection_type: String,
     },
 
     /// Path parameter extraction failed
     PathExtraction {
+        /// HTTP status Axum's rejection suggested for this failure.
         status: StatusCode,
+        /// Axum's rejection body text, included as `details` in the response.
         body_text: String,
+        /// The concrete `PathRejection` variant name, for diagnostics.
         rejection_type: String,
     },
 
     /// Query parameter extraction failed
     QueryExtraction {
+        /// HTTP status Axum's rejection suggested for this failure.
         status: StatusCode,
+        /// Axum's rejection body text, included as `details` in the response.
         body_text: String,
+        /// The concrete `QueryRejection` variant name, for diagnostics.
         rejection_type: String,
     },
 

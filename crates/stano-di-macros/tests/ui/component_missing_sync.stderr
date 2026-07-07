@@ -1,0 +1,5 @@
+error: #[component] trait must have Send + Sync supertraits
+ --> tests/ui/component_missing_sync.rs:4:7
+  |
+4 | trait Greeter: Send {
+  |       ^^^^^^^
