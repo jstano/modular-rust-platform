@@ -2,18 +2,18 @@
 //! into [`crate::server::run`].
 
 use axum::{extract::MatchedPath, extract::Request, middleware::Next, response::Response};
-use opentelemetry::{global, trace::TracerProvider, KeyValue};
+use opentelemetry::{KeyValue, global, trace::TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
+    Resource,
     logs::SdkLoggerProvider,
     metrics::SdkMeterProvider,
     trace::{Sampler, SdkTracerProvider},
-    Resource,
 };
 use stano_di::environment::Environment;
 use std::time::Instant;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// OTLP wire protocol used to talk to the collector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

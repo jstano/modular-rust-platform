@@ -1,0 +1,5 @@
+error: #[get] fn handler: inferred 200 response from the return type conflicts with an explicit `(status = 200, ...)` entry in `responses(...)`; the 200 case is always inferred from the return type — remove it from `responses(...)` and keep only error-case entries there.
+ --> tests/ui/duplicate_200_response.rs:8:1
+  |
+8 | async fn handler() -> AppJson<Foo> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

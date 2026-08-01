@@ -1,0 +1,7 @@
+[package]
+name = "direct_axum_consumer_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stano-axum = "0.1.0"

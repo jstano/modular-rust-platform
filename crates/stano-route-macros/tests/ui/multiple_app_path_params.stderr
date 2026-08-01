@@ -1,0 +1,5 @@
+error: #[get]: found more than one AppPath<_> parameter; combine multiple path segments into one #[derive(utoipa::IntoParams)] struct
+ --> tests/ui/multiple_app_path_params.rs:6:1
+  |
+6 | async fn handler(a: AppPath<String>, b: AppPath<String>) -> &'static str {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

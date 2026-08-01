@@ -30,7 +30,7 @@ stano-common = { path = "../stano-common" }
   - `ServiceError::Internal` or `ApiError::Internal` → 500 (logged, details hidden from response).
   - Extraction errors (`JsonExtraction`, etc.) → client error status with `code: "INVALID_JSON"` / `"INVALID_PATH"` / `"INVALID_QUERY"` (logged).
 
-- **`ErrorResponse`** — standard JSON error shape: `{ status, code, message, details?, request_id? }`.
+- **`ErrorResponse`** — standard JSON error shape: `{ status, code, message, details?, request_id? }`. Derives `utoipa::ToSchema` so it can be referenced directly in `#[utoipa::path(responses(...))]` blocks (see Usage Example).
   - `new(status: u16, code: impl Into<...>, message: impl Into<String>) -> Self`
   - `with_details(mut self, details: impl Into<String>) -> Self`
   - `with_request_id(mut self, request_id: impl Into<String>) -> Self`
@@ -57,18 +57,20 @@ stano-common = { path = "../stano-common" }
 ```rust
 use stano_axum::{AppJson, AppPath, ApiError, ErrorResponse};
 use stano_common::{ServiceError, id_type};
+use stano_launcher::{get, post};
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 id_type!(UserId, uuid_v7);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct UserRequest {
     email: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct UserResponse {
     id: String,
     email: String,
@@ -85,7 +87,15 @@ async fn create_user(req: UserRequest) -> Result<UserResponse, ServiceError> {
     })
 }
 
-// HTTP handler using custom extractors.
+// HTTP handler using custom extractors, annotated for OpenAPI generation.
+// stano-launcher's #[post(...)]/#[get(...)]/etc. (see stano-launcher's README) replace
+// #[utoipa::path(...)], inferring request_body/the 200 response/params(...) from the
+// handler's signature — write #[post(...)] instead of #[utoipa::path], and the spec stays
+// in sync automatically, with no separate `axum::Router::route` call.
+#[post(
+    path = "/api/users",
+    responses((status = 400, body = ErrorResponse)),
+)]
 async fn create_user_handler(
     AppJson(req): AppJson<UserRequest>,
 ) -> Result<AppJson<UserResponse>, ApiError> {
@@ -93,7 +103,14 @@ async fn create_user_handler(
     Ok(AppJson(user))
 }
 
-// Another handler using path extraction.
+// Another handler using path extraction, with a bearer-auth requirement declared explicitly.
+// `params(("user_id" = UserId, Path))` is inferred from `AppPath<UserId>` + the single
+// `{user_id}` placeholder.
+#[get(
+    path = "/api/users/{user_id}",
+    responses((status = 404, body = ErrorResponse)),
+    security(("bearerAuth" = [])),
+)]
 async fn get_user(
     AppPath(user_id): AppPath<UserId>,
 ) -> Result<AppJson<UserResponse>, ApiError> {

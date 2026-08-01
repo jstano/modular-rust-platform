@@ -24,11 +24,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Request;
     use axum::http::StatusCode;
     use axum::routing::get;
-    use axum::Router;
     use tower::util::ServiceExt;
 
     #[test]

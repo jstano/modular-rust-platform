@@ -41,7 +41,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
-    use axum::{middleware, Router};
+    use axum::{Router, middleware};
     use stano_common::ServiceError;
     use tower::util::ServiceExt;
 

@@ -1,0 +1,11 @@
+[package]
+name = "stano-example-services"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-example-domain = { path = "../domain" }
+stano-common = { path = "../../stano-common" }
+stano-di = { path = "../../stano-di" }
+stano-di-macros = { path = "../../stano-di-macros" }

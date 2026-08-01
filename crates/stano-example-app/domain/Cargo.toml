@@ -1,0 +1,11 @@
+[package]
+name = "stano-example-domain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-common = { path = "../../stano-common" }
+stano-di = { path = "../../stano-di" }
+stano-di-macros = { path = "../../stano-di-macros" }
+serde = { version = "1", features = ["derive"] }

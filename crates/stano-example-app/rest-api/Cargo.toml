@@ -1,0 +1,16 @@
+[package]
+name = "stano-example-rest-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-example-domain = { path = "../domain" }
+stano-example-services = { path = "../services" }
+stano-example-security = { path = "../security" }
+stano-common = { path = "../../stano-common" }
+stano-starter-rest = { path = "../../stano-starter-rest" }
+
+axum = { version = "0.8.7" }
+utoipa = { version = "5", features = ["macros"] }
+serde = { version = "1", features = ["derive"] }

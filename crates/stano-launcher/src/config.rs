@@ -28,6 +28,10 @@ pub struct BootstrapConfig {
     /// from this before doing anything else. Build with
     /// [`crate::observability::observability_config_from_env`], or construct explicitly.
     pub observability: ObservabilityConfig,
+    /// When true, mounts Swagger UI at `/swagger` and the generated OpenAPI document at
+    /// `/api-docs/openapi.json`. Typically wired to [`is_dev_environment`] so it's off in
+    /// production, but left to the app to decide.
+    pub enable_swagger: bool,
 }
 
 /// True when running a debug build, or when `RUST_ENV=development` (case-insensitive).

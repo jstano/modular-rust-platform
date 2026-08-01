@@ -1,0 +1,5 @@
+error: #[get] can only be used on functions
+ --> tests/ui/get_on_non_fn.rs:4:1
+  |
+4 | struct NotAFn;
+  | ^^^^^^^^^^^^^^

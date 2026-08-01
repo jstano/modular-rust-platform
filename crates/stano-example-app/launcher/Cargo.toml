@@ -1,0 +1,21 @@
+[package]
+name = "stano-example-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-example-infrastructure = { path = "../infrastructure" }
+stano-example-rest-api       = { path = "../rest-api" }
+stano-example-security       = { path = "../security" }
+stano-di       = { path = "../../stano-di" }
+stano-launcher = { path = "../../stano-launcher" }
+
+utoipa-axum = { version = "0.2" }
+tokio       = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow      = "1"
+
+[dev-dependencies]
+axum       = { version = "0.8.7" }
+tower      = { version = "0.5", features = ["util"] }
+serde_json = "1.0"

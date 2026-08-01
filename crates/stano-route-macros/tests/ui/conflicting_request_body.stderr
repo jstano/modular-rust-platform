@@ -1,0 +1,5 @@
+error: #[post]: request_body = Bar conflicts with inferred AppJson<Foo> parameter type; remove one
+ --> tests/ui/conflicting_request_body.rs:9:1
+  |
+9 | async fn handler(a: AppJson<Foo>) -> AppJson<Baz> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: #[post]: found more than one AppJson<_> parameter; a handler can only take one request body
+ --> tests/ui/multiple_app_json_params.rs:9:1
+  |
+9 | async fn handler(a: AppJson<Foo>, b: AppJson<Bar>) -> AppJson<Baz> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

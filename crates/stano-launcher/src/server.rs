@@ -1,10 +1,10 @@
 use axum::{
-    http::{HeaderName, HeaderValue, StatusCode}, middleware,
+    Json, Router,
+    http::{HeaderName, HeaderValue, StatusCode},
+    middleware,
     response::IntoResponse,
-    Json,
-    Router,
 };
-use stano_axum::{error_logging_middleware, http_request_logging_middleware, ErrorResponse};
+use stano_axum::{ErrorResponse, error_logging_middleware, http_request_logging_middleware};
 use stano_di::application_context::ApplicationContext;
 use std::{sync::Arc, time::Duration};
 use tower_http::{
@@ -16,43 +16,51 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     config::BootstrapConfig,
     observability::{self, record_http_metrics},
+    routes::collect_routes,
     shutdown::shutdown_signal,
 };
 
-/// Three route tiers for organizational clarity. `run()` merges all three with the same
-/// middleware stack — there is no automatic auth tier differentiation. Your app must apply
-/// its own auth/authz middleware to `protected` and `admin` before passing them in here.
-pub struct RouteGroups {
-    /// Routes accessible to all, no auth applied.
-    pub public: Router<Arc<ApplicationContext>>,
-    /// Routes requiring auth — you apply the guard.
-    pub protected: Router<Arc<ApplicationContext>>,
-    /// Routes requiring admin role — you apply the guard.
-    pub admin: Router<Arc<ApplicationContext>>,
-}
-
-/// Starts the server: merges the three route groups, applies the fixed middleware stack
+/// Starts the server: merges all `#[get]`/`#[post]`/etc.-registered handlers (see
+/// [`crate::routes`]) with any hand-built `extra_routes`, applies the fixed middleware stack
 /// (see the crate README for the full list and ordering), binds a `TcpListener` on
 /// `0.0.0.0:{port}`, and runs until Ctrl+C (or SIGTERM on Unix) triggers graceful shutdown.
+///
+/// `extra_routes` is for routes that don't go through `#[get]`/`#[post]`/etc. (e.g. a raw
+/// health check with no `#[utoipa::path]`) — pass `OpenApiRouter::new()` if there are none.
+///
+/// `authorization` is an optional [`stano_axum::security::AuthorizationLayer`], built by the
+/// app via `stano_axum::security::AuthorizationBuilder` — pass `None` to skip authorization
+/// enforcement entirely.
 pub async fn run(
     ctx: Arc<ApplicationContext>,
-    routes: RouteGroups,
+    extra_routes: OpenApiRouter<Arc<ApplicationContext>>,
     config: BootstrapConfig,
+    authorization: Option<stano_axum::security::AuthorizationLayer>,
 ) -> anyhow::Result<()> {
     let otel_guard = observability::init_observability(&config.observability)?;
     let port = config.port;
     let metrics_enabled = config.observability.metrics_enabled;
     let http_logging_enabled = config.observability.http_logging_enabled;
 
-    let mut app = Router::new()
-        .merge(routes.public)
-        .merge(routes.protected)
-        .merge(routes.admin)
-        .with_state(Arc::clone(&ctx));
+    let (router, openapi) = OpenApiRouter::<Arc<ApplicationContext>>::new()
+        .merge(collect_routes())
+        .merge(extra_routes)
+        .split_for_parts();
+
+    let mut app = router;
+    if config.enable_swagger {
+        let swagger_router: Router<Arc<ApplicationContext>> = SwaggerUi::new("/swagger")
+            .url("/api-docs/openapi.json", openapi)
+            .into();
+        app = app.merge(swagger_router);
+    }
+    let mut app = app.with_state(Arc::clone(&ctx));
 
     if metrics_enabled {
         app = app.route_layer(middleware::from_fn(record_http_metrics));
@@ -70,14 +78,19 @@ pub async fn run(
         app = app.layer(middleware::from_fn(http_request_logging_middleware));
     }
 
-    let app = app
+    let mut app = app
         .layer(middleware::from_fn(error_logging_middleware))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(CompressionLayer::new())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024))
-        .layer(middleware::from_fn(add_security_headers));
+        .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024));
+
+    if let Some(authorization) = authorization {
+        app = app.layer(authorization);
+    }
+
+    let app = app.layer(middleware::from_fn(add_security_headers));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!("Listening on port {port}");
@@ -190,6 +203,7 @@ mod tests {
             cors_origin_suffixes,
             cors_dev_origins: vec![],
             is_dev: false,
+            enable_swagger: false,
             observability: ObservabilityConfig {
                 enabled: false,
                 otlp_endpoint: String::new(),

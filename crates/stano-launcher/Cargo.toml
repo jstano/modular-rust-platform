@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-stano-di       = { path = "../stano-di" }
-stano-security = { path = "../stano-security" }
-stano-axum     = { path = "../stano-axum" }
+stano-di           = { path = "../stano-di" }
+stano-security     = { path = "../stano-security" }
+stano-axum         = { path = "../stano-axum" }
 
 tokio          = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 axum           = { version = "0.8.7" }
@@ -14,6 +14,10 @@ tower-http     = { version = "0.6", features = [
     "cors", "timeout", "trace", "compression-full",
     "request-id", "catch-panic", "set-header", "limit",
 ] }
+
+utoipa            = { version = "5" }
+utoipa-axum       = { version = "0.2" }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 tracing = "0.1"
 anyhow  = "1"
@@ -28,3 +32,4 @@ opentelemetry-semantic-conventions = "0.32"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+serde = { version = "1", features = ["derive"] }

@@ -55,9 +55,8 @@ openssl ec -in private.pem -pubout -out public.pem
 ### 3. Implement main.rs
 
 ```rust
-use axum::routing::get;
 use stano_di::{application_context::ApplicationContext, environment::OsEnvironment};
-use stano_launcher::{BootstrapConfig, RouteGroups, run};
+use stano_launcher::{get, BootstrapConfig, run};
 use stano_security::JwtConfig;
 use std::sync::Arc;
 
@@ -79,13 +78,13 @@ async fn main() -> anyhow::Result<()> {
     // Register services, repos, etc. here
     ctx.validate().map_err(|errs| anyhow::anyhow!("{errs:?}"))?;
 
-    let routes = RouteGroups {
-        public: axum::Router::new().route("/health", get(|| async { "ok" })),
-        protected: axum::Router::new(),
-        admin: axum::Router::new(),
-    };
+    // Every #[get]/#[post]/etc.-annotated handler in the binary is auto-registered.
+    run(Arc::new(ctx), utoipa_axum::router::OpenApiRouter::new(), config).await
+}
 
-    run(Arc::new(ctx), routes, config).await
+#[get(path = "/health", responses((status = 200, body = String)))]
+async fn health_handler() -> &'static str {
+    "ok"
 }
 ```
 
@@ -102,15 +101,15 @@ curl http://localhost:3000/health
 
 ### `stano-launcher` — App Bootstrap
 
-Wires Axum router with a fixed middleware stack and manages graceful shutdown.
+Wires Axum router with a fixed middleware stack and manages graceful shutdown. `#[get(...)]`/`#[post(...)]`/`#[put(...)]`/`#[delete(...)]`/`#[patch(...)]` replace `#[utoipa::path(...)]`, inferring `operation_id`/`request_body`/the `200` response/`params(...)` from the handler's signature, and auto-registering the handler into a `utoipa_axum::router::OpenApiRouter` — so an OpenAPI document is generated as a byproduct of registration, no hand-maintained spec file. Set `BootstrapConfig.enable_swagger` to mount Swagger UI at `/swagger` and the spec at `/api-docs/openapi.json`.
 
-**Key types:** `BootstrapConfig`, `RouteGroups`, `run()`
+**Key types:** `BootstrapConfig`, `#[get]`/`#[post]`/`#[put]`/`#[delete]`/`#[patch]`, `run()`
 
 Provides:
-- Three route tiers (`public`, `protected`, `admin`) for organizational clarity — no automatic auth layer (you implement and apply auth/authz to your routers)
+- Auto-registering `#[get]`/`#[post]`/etc. attributes — no manual `.routes(routes!(handler))` calls and no separate `#[utoipa::path(...)]` attribute to keep in sync. No built-in auth mechanism yet (planned as its own macro) — apply guards by hand to routes you compose yourself and pass via `extra_routes`
 - Full middleware stack: CORS, timeout, tracing, error logging, panic handling, compression, request-id, body limits, security headers
 - Graceful shutdown on SIGINT/SIGTERM
-- Server bootstrap via `run(ctx, routes, config)` listening on configured port
+- Server bootstrap via `run(ctx, extra_routes, config)` listening on configured port
 
 ---
 

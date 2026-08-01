@@ -1,0 +1,5 @@
+error: #[get] fn handler: cannot infer a 200 response (return type is not AppJson<_> or Result<AppJson<_>, _>) and no explicit responses(...) was provided; add responses((status = 200, body = ...)) or change the return type to AppJson<_>.
+ --> tests/ui/missing_responses_no_inference.rs:4:1
+  |
+4 | async fn handler() -> &'static str {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -13,7 +13,7 @@ stano-starter-rest = { path = "../stano-starter-rest" }
 
 - `stano-di` — the DI container and application context
 - `stano-axum` — HTTP extractors (`AppJson`, `AppPath`, `AppQuery`), error types, middleware
-- `stano-launcher` — server bootstrap (`run`, `RouteGroups`, `BootstrapConfig`)
+- `stano-launcher` — server bootstrap (`run`, `#[get]`/`#[post]`/etc., `BootstrapConfig`)
 - `stano-security` — JWT, claims, security context (for use in handlers)
 
 ## Why
@@ -33,5 +33,5 @@ This crate contains **no code of its own** — it is a pure re-export facade. Fo
 
 - [stano-di](../stano-di) — DI container, `ApplicationContext`
 - [stano-axum](../stano-axum) — HTTP extractors, `ApiError`, middleware
-- [stano-launcher](../stano-launcher) — server bootstrap, `RouteGroups`, middleware stack
+- [stano-launcher](../stano-launcher) — server bootstrap, `#[get]`/`#[post]`/etc. auto-registration, middleware stack
 - [stano-security](../stano-security) — JWT, `SecurityContext`

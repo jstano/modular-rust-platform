@@ -1,0 +1,9 @@
+[package]
+name = "stano-example-security"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-security = { path = "../../stano-security" }
+serde = { version = "1", features = ["derive"] }

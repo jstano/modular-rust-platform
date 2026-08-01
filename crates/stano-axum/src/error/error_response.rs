@@ -1,8 +1,9 @@
 use serde::Serialize;
 use std::borrow::Cow;
+use utoipa::ToSchema;
 
 /// Standard JSON error response format
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ErrorResponse {
     /// HTTP status code
     pub status: u16,
