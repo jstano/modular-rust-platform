@@ -185,7 +185,9 @@ mod tests {
         http::{Method, Request},
         routing::get,
     };
+    use stano_di::environment::Environment;
     use stano_security::JwtConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tower::util::ServiceExt;
 
     fn test_config(
@@ -378,5 +380,71 @@ mod tests {
         let payload: Box<dyn std::any::Any + Send> = Box::new(42);
         let response = handle_panic(payload);
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    struct TestEnvironment;
+
+    impl Environment for TestEnvironment {
+        fn get(&self, _key: &str) -> Option<String> {
+            None
+        }
+    }
+
+    /// Reserves an OS-assigned free port by binding then immediately dropping a
+    /// listener, so `run()` (which binds its own listener) can be pointed at a port
+    /// known not to be in use.
+    async fn free_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind ephemeral port");
+        listener.local_addr().expect("local addr").port()
+    }
+
+    #[tokio::test]
+    async fn run_binds_listener_and_serves_requests_through_the_middleware_stack() {
+        let port = free_port().await;
+        let config = test_config(vec![], vec![]);
+        let config = BootstrapConfig { port, ..config };
+        let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
+
+        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None));
+
+        let mut stream = loop {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        };
+
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write request");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .await
+            .expect("read response");
+
+        // No route is registered, so the router 404s — but that response still had to
+        // flow through the full middleware stack `run()` assembles (CORS, timeout,
+        // trace, catch-panic, compression, request-id, body-limit, security headers).
+        assert!(response.starts_with("HTTP/1.1 404"), "got: {response}");
+        assert!(
+            response
+                .to_ascii_lowercase()
+                .contains("x-content-type-options: nosniff")
+        );
+        assert!(
+            response
+                .to_ascii_lowercase()
+                .contains("x-frame-options: deny")
+        );
+
+        // `run()` only returns after graceful shutdown (Ctrl+C/SIGTERM), which this
+        // test can't trigger without signaling the whole test process, so the
+        // `otel_guard.shutdown()` tail of `run()` is intentionally left uncovered here.
+        server.abort();
     }
 }

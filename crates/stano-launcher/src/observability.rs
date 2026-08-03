@@ -328,7 +328,14 @@ pub async fn record_http_metrics(req: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+    };
     use std::collections::HashMap;
+    use tower::util::ServiceExt;
 
     struct MockEnvironment(HashMap<String, String>);
 
@@ -422,5 +429,71 @@ mod tests {
         // OTLP exporters connect lazily/asynchronously, so building them against an
         // unreachable endpoint should not fail or panic here.
         let _ = init_observability(&config);
+    }
+
+    #[tokio::test]
+    async fn enabled_config_with_http_protobuf_protocol_does_not_panic() {
+        let config = ObservabilityConfig {
+            enabled: true,
+            otlp_endpoint: "http://127.0.0.1:1".to_string(),
+            protocol: OtlpProtocol::HttpProtobuf,
+            service_name: "test-service".to_string(),
+            service_version: "0.0.0".to_string(),
+            resource_attributes: Vec::new(),
+            trace_sample_ratio: 1.0,
+            log_filter: "info".to_string(),
+            metrics_enabled: true,
+            http_logging_enabled: true,
+        };
+
+        // Exercises the `OtlpProtocol::HttpProtobuf` branch of the span/log/metric
+        // exporter builders (the Grpc branch is covered above).
+        let _ = init_observability(&config);
+    }
+
+    async fn passthrough_handler() -> &'static str {
+        "ok"
+    }
+
+    fn metrics_app() -> Router {
+        Router::new()
+            .route("/hello/{id}", axum::routing::get(passthrough_handler))
+            .route_layer(middleware::from_fn(record_http_metrics))
+    }
+
+    #[tokio::test]
+    async fn record_http_metrics_passes_through_response() {
+        let app = metrics_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/hello/42")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn record_http_metrics_passes_through_404_for_unmatched_route() {
+        // No `MatchedPath` extension is present for a 404, exercising the
+        // `unwrap_or_else(|| "unknown")` fallback for `route`.
+        let app = metrics_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/does-not-exist")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
