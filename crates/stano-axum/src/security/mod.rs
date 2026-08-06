@@ -3,6 +3,8 @@
 mod authorization;
 mod layer;
 mod pattern;
+mod post_authorization_hook;
 
 pub use authorization::{AuthorizationBuildError, AuthorizationBuilder, RequestMatcherBuilder};
 pub use layer::AuthorizationLayer;
+pub use post_authorization_hook::PostAuthorizationHook;

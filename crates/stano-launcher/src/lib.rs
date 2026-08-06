@@ -18,6 +18,11 @@ mod shutdown;
 /// `stano-axum`'s routing/inventory machinery through the `#[get]`/`#[post]`/etc. macros.
 pub extern crate stano_axum;
 
+/// Re-exported so a consumer implementing `run()`'s `register_metrics` callback can name
+/// `prometheus::Registry`/`Gauge`/`IntCounter`/etc. without adding its own `prometheus`
+/// dependency (and risking a version mismatch with the one `run()` actually uses).
+pub extern crate prometheus;
+
 /// Auto-registration of `#[get]`/`#[post]`/`#[put]`/`#[delete]`/`#[patch]`-annotated
 /// handlers, consumed by [`run`]. Defined in `stano-axum` so adapter crates that only write
 /// routes never need to depend on `stano-launcher` itself.

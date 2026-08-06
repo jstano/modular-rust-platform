@@ -59,15 +59,20 @@ utoipa-axum = "0.2"
 - **`#[get(...)]` / `#[post(...)]` / `#[put(...)]` / `#[delete(...)]` / `#[patch(...)]`** — per-HTTP-method attribute macros (from `stano-route-macros`, re-exported here) that replace `#[utoipa::path(...)]` on a handler and auto-register it, so it's picked up by `run()` without a manual `.routes(routes!(handler))` call.
   - Infer `operation_id` (from the function name), `request_body` (from a single `AppJson<T>` parameter), the `200` entry of `responses(...)` (from an `AppJson<T>`/`Result<AppJson<T>, E>` return type), and `params(...)` (from `AppPath<T>`/`AppQuery<T>` parameters); forward everything else (`path`, `tag`/`tags`, `security`, extra `responses(...)` entries) verbatim into a generated `#[utoipa::path(...)]` attribute. Write `#[get(...)]` (etc.) **instead of** `#[utoipa::path(...)]`, not in addition to it.
   - Internally, each annotated handler submits a factory into a global `inventory` collection at compile time (the same pattern `stano-di`'s `#[service]` uses for DI registration); `collect_routes()` (see below) folds all of them into one `OpenApiRouter` at startup.
-  - These macros don't apply any auth/authz middleware themselves — there's no `auth = <guard_fn>` argument today. Per-route auth is planned as its own dedicated macro; until then, apply `.layer(axum::middleware::from_fn(guard))` by hand to routes you compose yourself and pass in via `run()`'s `extra_routes`.
+  - These macros don't apply any auth/authz middleware themselves — auth enforcement is applied once, globally, via `run()`'s `authorization` parameter (see Authorization below), not per-route. `security(...)` inside a macro's attributes is documentation only (feeds the generated OpenAPI doc) and has no runtime effect — keep it in sync with your `AuthorizationBuilder` rules by hand.
 
 - **`stano_launcher::routes::collect_routes() -> OpenApiRouter<Arc<ApplicationContext>>`** — builds the router from every `#[get]`/`#[post]`/etc.-annotated handler in the binary. Called automatically by `run()` — you normally don't need to call it directly.
 
+### Authorization
+
+- **`authorization: Option<stano_axum::security::AuthorizationLayer>`** (`run()`'s 4th parameter) — a declarative, Spring-Security-style rule table built via `stano_axum::security::AuthorizationBuilder`, applied globally as the outermost-but-one layer (just inside CORS). Pass `None` to skip authorization enforcement entirely (every route open). See `stano-axum`'s docs for `AuthorizationBuilder`'s API (`.request_matcher(...)`, `.permit_all()`/`.authenticated()`/`.has_role(...)`, `.with_claims_validator(...)`, `.cookie_name(...)`, `.any_request()...build(jwt_config)`).
+- **`post_authorization: Option<stano_axum::security::PostAuthorizationHook>`** (`run()`'s 5th parameter) — an optional middleware hook applied immediately after `authorization` in request-flow order (between authorization and the router, closer to handlers). Exists so a consumer can bridge whatever `AuthorizationLayer` inserted into request extensions (a `stano_security::SecurityContext<E>`) into an app-local mechanism (e.g. a `tokio::task_local!` your service layer already reads from), without `stano-launcher`/`stano-axum` needing to know that mechanism exists. Build one via `PostAuthorizationHook::from_fn(your_middleware_fn)`, where `your_middleware_fn` matches `axum::middleware::from_fn`'s simplest shape: `async fn(Request, Next) -> impl IntoResponse`. Pass `None` to skip it — has no effect if `authorization` is also `None`.
+
 ### Server Startup
 
-- **`run(ctx: Arc<ApplicationContext>, extra_routes: OpenApiRouter<Arc<ApplicationContext>>, config: BootstrapConfig) -> Result<(), anyhow::Error>`** — start the server.
+- **`run(ctx: Arc<ApplicationContext>, extra_routes: OpenApiRouter<Arc<ApplicationContext>>, config: BootstrapConfig, authorization: Option<AuthorizationLayer>, post_authorization: Option<PostAuthorizationHook>) -> Result<(), anyhow::Error>`** — start the server.
   - Merges `collect_routes()` (every `#[get]`/`#[post]`/etc.-annotated handler) with `extra_routes` (anything you built by hand — pass `OpenApiRouter::new()` if there's nothing extra).
-  - Applies a fixed middleware stack (see below).
+  - Applies a fixed middleware stack (see below), including `authorization`/`post_authorization` if provided.
   - Binds a `TcpListener` on `0.0.0.0:{port}`.
   - Logs "Listening on port {port}".
   - Runs until Ctrl+C (or SIGTERM on Unix) is received, then performs graceful shutdown.
@@ -76,17 +81,19 @@ utoipa-axum = "0.2"
 
 Applied in this request-processing order (outermost → innermost, closest to handlers):
 
-1. **Security headers** — injects `x-content-type-options: nosniff`, `x-frame-options: DENY`, `strict-transport-security: max-age=31536000; includeSubDomains`.
-2. **Request body limit** — 10 MB max request body.
-3. **Propagate request ID** — propagates `x-request-id` upstream.
-4. **Set request ID** — injects a unique `x-request-id` if not present.
-5. **Compression** — gzip/brotli/deflate (auto-negotiated).
-6. **Catch panic** — panics in handlers become 500 responses.
-7. **Error logging** — logs `ApiError` with request context (see `stano_axum::error_logging_middleware`).
-7a. **HTTP request logging** *(when `observability.http_logging_enabled` is true)* — logs every request with method, URI, status, latency, and trace_id (see `stano_axum::http_request_logging_middleware`). Sits just inside the Tracing layer so it runs within the same span and can read a valid OTel trace_id.
-8. **Tracing** — structured request/response logging via `tracing`, exported via OTLP when `observability.enabled` is true (see Observability above).
-9. **Timeout** — 300-second per-request timeout.
-10. **CORS** — allow/disallow origins based on config.
+1. **CORS** — allow/disallow origins based on config. Deliberately outermost so it can answer preflight `OPTIONS` requests directly, without them ever reaching `authorization` — a rule table scoped to specific methods (GET/POST/etc, not OPTIONS) would otherwise reject preflight requests to protected routes with 401.
+2. **Security headers** — injects `x-content-type-options: nosniff`, `x-frame-options: DENY`, `strict-transport-security: max-age=31536000; includeSubDomains`.
+3. **Authorization** *(when `authorization` is `Some`)* — the declarative `AuthorizationLayer` rule table (see Authorization above).
+4. **Post-authorization hook** *(when `post_authorization` is `Some`)* — runs immediately after authorization, closer to handlers (see Authorization above).
+5. **Request body limit** — 10 MB max request body.
+6. **Propagate request ID** — propagates `x-request-id` upstream.
+7. **Set request ID** — injects a unique `x-request-id` if not present.
+8. **Compression** — gzip/brotli/deflate (auto-negotiated).
+9. **Catch panic** — panics in handlers become 500 responses.
+10. **Error logging** — logs `ApiError` with request context (see `stano_axum::error_logging_middleware`).
+10a. **HTTP request logging** *(when `observability.http_logging_enabled` is true)* — logs every request with method, URI, status, latency, and trace_id (see `stano_axum::http_request_logging_middleware`). Sits just inside the Tracing layer so it runs within the same span and can read a valid OTel trace_id.
+11. **Tracing** — structured request/response logging via `tracing`, exported via OTLP when `observability.enabled` is true (see Observability above).
+12. **Timeout** — 300-second per-request timeout.
 
 Additionally, when `observability.metrics_enabled` or `observability.prometheus_enabled` is true, an HTTP metrics middleware is applied via `route_layer` (so it only wraps matched routes, giving it access to `MatchedPath` for the `http.route` attribute) — this records `http.server.request.duration` and `http.server.active_requests` via the global OTel meter.
 
@@ -97,6 +104,7 @@ When `observability.prometheus_enabled` is true, a `GET /metrics` route is merge
 ## Usage Example
 
 ```rust
+use stano_axum::security::{AuthorizationBuilder, PostAuthorizationHook};
 use stano_di::{ApplicationContext, OsEnvironment};
 use stano_launcher::{
     get, post, BootstrapConfig, is_dev_environment, observability_config_from_env, parse_csv_env, run,
@@ -110,13 +118,14 @@ async fn main() -> anyhow::Result<()> {
     let env = Arc::new(OsEnvironment::new());
 
     // Load config from environment.
+    let jwt_config = JwtConfig {
+        private_key_pem: env.get("JWT_PRIVATE_KEY").expect("required"),
+        public_key_pem: env.get("JWT_PUBLIC_KEY").expect("required"),
+        expiration_seconds: 3600,
+    };
     let config = BootstrapConfig {
         port: env.get("PORT").and_then(|p| p.parse().ok()).unwrap_or(3000),
-        jwt_config: JwtConfig {
-            private_key_pem: env.get("JWT_PRIVATE_KEY").expect("required"),
-            public_key_pem: env.get("JWT_PUBLIC_KEY").expect("required"),
-            expiration_seconds: 3600,
-        },
+        jwt_config: jwt_config.clone(),
         cors_origins: parse_csv_env(env.as_ref(), "APP_CORS_ORIGINS"),
         cors_origin_suffixes: parse_csv_env(env.as_ref(), "APP_CORS_ORIGIN_SUFFIXES"),
         cors_dev_origins: parse_csv_env(env.as_ref(), "APP_CORS_DEV_ORIGINS"),
@@ -130,15 +139,38 @@ async fn main() -> anyhow::Result<()> {
     // Register your services here...
     ctx.validate().map_err(|errs| anyhow::anyhow!("{errs:?}"))?; // Validate the container (detects cycles, etc.)
 
+    // Declarative, per-route auth — every route not matched by an earlier rule falls to
+    // `.any_request()`. Pass `None` in place of `Some(authorization)` below to skip
+    // enforcement entirely.
+    let authorization = AuthorizationBuilder::<()>::new()
+        .request_matcher("/api/public/{*rest}")
+        .permit_all()
+        .any_request()
+        .authenticated()
+        .build(jwt_config)?;
+
     // Start the server (blocks until Ctrl+C or SIGTERM). Every #[get]/#[post]/etc.-annotated
     // handler anywhere in the binary is auto-registered; extra_routes is for anything else.
-    run(Arc::new(ctx), OpenApiRouter::new(), config).await
+    run(
+        Arc::new(ctx),
+        OpenApiRouter::new(),
+        config,
+        Some(authorization),
+        None, // or Some(PostAuthorizationHook::from_fn(your_middleware_fn))
+    )
+    .await
 }
 
 // Your handlers — #[get(...)]/#[post(...)]/etc. replace #[utoipa::path(...)], inferring
 // operation_id/request_body/the 200 response/params(...) from the handler's signature.
+// `security(...)` documents which routes need a bearer token — it has no runtime effect,
+// so keep it in sync with the `AuthorizationBuilder` rules above by hand.
 
-#[post(path = "/api/users", responses((status = 200, body = UserResponse)))]
+#[post(
+    path = "/api/users",
+    responses((status = 200, body = UserResponse)),
+    security(("bearerAuth" = []))
+)]
 async fn create_user_handler(/* ... */) -> /* ... */ { /* ... */ }
 
 #[get(path = "/api/profile", responses((status = 200, body = ProfileResponse)))]
@@ -147,7 +179,7 @@ async fn get_profile_handler(/* ... */) -> /* ... */ { /* ... */ }
 
 ## Notes
 
-- **No built-in auth mechanism yet** — `#[get]`/`#[post]`/etc. don't apply any middleware; there's no `auth = <guard_fn>` argument. Per-route auth is planned as its own dedicated macro. Until then, build any auth-guarded routes by hand (`OpenApiRouter::new().routes(routes!(handler)).layer(axum::middleware::from_fn(guard))`) and pass them in via `run()`'s `extra_routes`.
+- **Auth is global, not per-route** — `#[get]`/`#[post]`/etc. don't apply any middleware themselves; there's no `auth = <guard_fn>` argument, and none is planned. Enforcement is entirely `run()`'s `authorization`/`post_authorization` parameters (see Authorization above) — a single declarative rule table covering every route, macro-registered or `extra_routes`.
 - **Route merging** — every `#[get]`/`#[post]`/etc.-annotated handler and `extra_routes` are merged into a single router, so define paths carefully to avoid collisions.
 - **Graceful shutdown** — the server responds to Ctrl+C on all platforms and SIGTERM on Unix-like systems. Connections are drained gracefully.
 - **CORS configuration** — pass `cors_origins`, `cors_origin_suffixes`, and `cors_dev_origins` all empty for permissive CORS (allow any origin); otherwise list exact origins and/or origin suffixes. Populate any of these from an env var with `parse_csv_env`, or set them directly from your app config. Set `is_dev` (via `is_dev_environment` or explicitly) to switch to `cors_dev_origins` in development.

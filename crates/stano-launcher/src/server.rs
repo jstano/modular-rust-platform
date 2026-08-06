@@ -37,11 +37,28 @@ use crate::{
 /// `authorization` is an optional [`stano_axum::security::AuthorizationLayer`], built by the
 /// app via `stano_axum::security::AuthorizationBuilder` — pass `None` to skip authorization
 /// enforcement entirely.
+///
+/// `post_authorization` is an optional [`stano_axum::security::PostAuthorizationHook`],
+/// applied immediately after `authorization` in request-flow order (between authorization
+/// and the router) — e.g. to bridge `AuthorizationLayer`'s `SecurityContext` into an
+/// app-local mechanism. Pass `None` to skip it; has no effect if `authorization` is also
+/// `None`.
+///
+/// `register_metrics` is an optional callback invoked once, immediately after the
+/// Prometheus registry is built — only if [`ObservabilityConfig::prometheus_enabled`] is
+/// true — so a consumer can register its own custom collectors (`prometheus::Gauge`,
+/// `IntCounter`, etc.) into the same registry `run()` mounts at `GET /metrics`, rather than
+/// standing up a second, separate metrics endpoint. Hold onto whatever handle
+/// `registry.register(...)` returns (e.g. in a `std::sync::OnceLock`) to update the metric
+/// later from elsewhere in your app. A no-op (never called) if `prometheus_enabled` is
+/// false. Pass `None` if you have no custom metrics to register.
 pub async fn run(
     ctx: Arc<ApplicationContext>,
     extra_routes: OpenApiRouter<Arc<ApplicationContext>>,
     config: BootstrapConfig,
     authorization: Option<stano_axum::security::AuthorizationLayer>,
+    post_authorization: Option<stano_axum::security::PostAuthorizationHook>,
+    register_metrics: Option<fn(&prometheus::Registry)>,
 ) -> anyhow::Result<()> {
     let otel_guard = observability::init_observability(&config.observability)?;
     let port = config.port;
@@ -49,10 +66,17 @@ pub async fn run(
     let prometheus_enabled = config.observability.prometheus_enabled;
     let http_logging_enabled = config.observability.http_logging_enabled;
 
-    let (router, openapi) = OpenApiRouter::<Arc<ApplicationContext>>::new()
+    if let Some(registry) = otel_guard.prometheus_registry()
+        && let Some(register_metrics) = register_metrics
+    {
+        register_metrics(registry);
+    }
+
+    let (router, mut openapi) = OpenApiRouter::<Arc<ApplicationContext>>::new()
         .merge(collect_routes())
         .merge(extra_routes)
         .split_for_parts();
+    register_bearer_auth_scheme(&mut openapi);
 
     let mut app = router;
     if config.enable_swagger {
@@ -73,7 +97,6 @@ pub async fn run(
     }
 
     let mut app = app
-        .layer(cors_layer(&config))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(300),
@@ -92,11 +115,27 @@ pub async fn run(
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024));
 
+    // `post_authorization` is layered *before* `authorization` here so it ends up more
+    // inner (closer to the router, hit after authorization has run) — see its own doc
+    // comment for why (bridging `SecurityContext` into an app-local mechanism needs the
+    // request to have already passed the authorization check).
+    if let Some(post_authorization) = post_authorization {
+        app = app.layer(post_authorization);
+    }
+
     if let Some(authorization) = authorization {
         app = app.layer(authorization);
     }
 
-    let app = app.layer(middleware::from_fn(add_security_headers));
+    // CORS must be outermost (hit first) so it can answer preflight `OPTIONS` requests
+    // directly — `AuthorizationLayer`'s rule table is typically scoped to specific methods
+    // (GET/POST/etc, not OPTIONS), so an `OPTIONS` preflight to a protected route falls
+    // through to the mandatory `.any_request().authenticated()` rule and gets rejected with
+    // 401 *before* `CorsLayer` ever gets a chance to answer it, if CORS sits anywhere inside
+    // `authorization` in request-flow order. See `cors_preflight_...` tests below.
+    let app = app
+        .layer(middleware::from_fn(add_security_headers))
+        .layer(cors_layer(&config));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!("Listening on port {port}");
@@ -106,6 +145,29 @@ pub async fn run(
 
     otel_guard.shutdown()?;
     Ok(())
+}
+
+/// Registers a `bearerAuth` HTTP-bearer `SecurityScheme` in the generated OpenAPI document's
+/// `components.securitySchemes`, matching the scheme name every `#[get]`/`#[post]`/etc.
+/// handler's `security(("bearerAuth" = []))` annotation already references. Without this,
+/// those annotations point at an undefined scheme — Swagger UI's Authorize button doesn't
+/// render correctly, and the document is invalid against strict OpenAPI validators. Purely
+/// additive to the generated doc; has no effect on request handling.
+fn register_bearer_auth_scheme(openapi: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+
+    let components = openapi
+        .components
+        .get_or_insert_with(utoipa::openapi::schema::Components::new);
+    components.add_security_scheme(
+        "bearerAuth",
+        SecurityScheme::Http(
+            HttpBuilder::new()
+                .scheme(HttpAuthScheme::Bearer)
+                .bearer_format("JWT")
+                .build(),
+        ),
+    );
 }
 
 fn cors_layer(config: &BootstrapConfig) -> CorsLayer {
@@ -414,7 +476,7 @@ mod tests {
         let config = BootstrapConfig { port, ..config };
         let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
 
-        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None));
+        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None, None, None));
 
         let mut stream = loop {
             match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
@@ -463,7 +525,7 @@ mod tests {
         config.observability.prometheus_enabled = true;
         let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
 
-        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None));
+        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None, None, None));
 
         let mut stream = loop {
             match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
@@ -488,6 +550,129 @@ mod tests {
             response
                 .to_ascii_lowercase()
                 .contains("content-type: text/plain")
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn run_invokes_register_metrics_callback_and_scrape_includes_it() {
+        static CUSTOM_GAUGE: std::sync::OnceLock<prometheus::IntGauge> = std::sync::OnceLock::new();
+
+        fn register(registry: &prometheus::Registry) {
+            let gauge = prometheus::IntGauge::new("wb_build_info", "build marker").expect("gauge");
+            gauge.set(1);
+            registry
+                .register(Box::new(gauge.clone()))
+                .expect("register");
+            let _ = CUSTOM_GAUGE.set(gauge);
+        }
+
+        let port = free_port().await;
+        let mut config = test_config(vec![], vec![]);
+        config.port = port;
+        config.observability.prometheus_enabled = true;
+        let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
+
+        let server = tokio::spawn(run(
+            ctx,
+            OpenApiRouter::new(),
+            config,
+            None,
+            None,
+            Some(register),
+        ));
+
+        let mut stream = loop {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        };
+
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write request");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .await
+            .expect("read response");
+
+        assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+        assert!(
+            response.contains("wb_build_info 1"),
+            "custom collector should be scraped alongside built-in metrics, got: {response}"
+        );
+
+        server.abort();
+    }
+
+    /// Regression test for the ordering bug found during wanderbooks' Phase 6/7 migration
+    /// (see `docs/decisions/2026-08-03-modular-rust-platform-migration.md` in that repo):
+    /// `AuthorizationLayer` has no special-casing for `OPTIONS` preflight requests, and its
+    /// rule table is typically scoped to specific methods (GET/POST/etc, not OPTIONS) — so
+    /// a preflight to a method-scoped-protected route falls through to the mandatory
+    /// `.any_request().authenticated()` rule and gets rejected with 401 *before* `CorsLayer`
+    /// ever answers it, unless CORS sits outside `authorization` in request-flow order (i.e.
+    /// is the outermost layer, applied last in code). This exercises the real fix in `run()`
+    /// end-to-end, not just `cors_layer` in isolation.
+    #[tokio::test]
+    async fn options_preflight_to_authorization_protected_route_gets_cors_headers_not_401() {
+        let port = free_port().await;
+        let mut config = test_config(vec!["http://localhost:5173".to_string()], vec![]);
+        config.port = port;
+        let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
+
+        // A rule table where every route (including the one under test) requires
+        // authentication — mirrors a real app's `AuthorizationBuilder` chain.
+        let authorization = stano_axum::security::AuthorizationBuilder::<()>::new()
+            .any_request()
+            .authenticated()
+            .build(config.jwt_config.clone())
+            .expect("valid chain");
+
+        let server = tokio::spawn(run(
+            ctx,
+            OpenApiRouter::new(),
+            config,
+            Some(authorization),
+            None,
+            None,
+        ));
+
+        let mut stream = loop {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        };
+
+        stream
+            .write_all(
+                b"OPTIONS / HTTP/1.1\r\n\
+                  Host: localhost\r\n\
+                  Origin: http://localhost:5173\r\n\
+                  Access-Control-Request-Method: GET\r\n\
+                  Connection: close\r\n\r\n",
+            )
+            .await
+            .expect("write request");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .await
+            .expect("read response");
+
+        assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+        assert!(
+            response
+                .to_ascii_lowercase()
+                .contains("access-control-allow-origin: http://localhost:5173"),
+            "got: {response}"
         );
 
         server.abort();
