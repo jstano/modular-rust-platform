@@ -1,7 +1,13 @@
 //! OTLP-based observability: tracing, metrics, and log export, wired automatically
 //! into [`crate::server::run`].
 
-use axum::{extract::MatchedPath, extract::Request, middleware::Next, response::Response};
+use axum::{
+    extract::MatchedPath,
+    extract::Request,
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 use opentelemetry::{KeyValue, global, trace::TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter, WithExportConfig};
@@ -11,6 +17,7 @@ use opentelemetry_sdk::{
     metrics::SdkMeterProvider,
     trace::{Sampler, SdkTracerProvider},
 };
+use prometheus::{Encoder, Registry, TextEncoder};
 use stano_di::environment::Environment;
 use std::time::Instant;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -50,6 +57,12 @@ pub struct ObservabilityConfig {
     /// Whether to additionally export OTLP metrics and record HTTP server metrics.
     /// Independent of `enabled` so trace/log export can run without metrics.
     pub metrics_enabled: bool,
+    /// Whether to expose a local Prometheus scrape endpoint at `GET /metrics`, serving
+    /// all metrics recorded via the global OTel meter (including HTTP server metrics
+    /// when `record_http_metrics` is mounted). Unlike `metrics_enabled` (which pushes to
+    /// an OTLP collector), this is a pull exporter with no collector dependency, so it
+    /// works even when `enabled` is `false`.
+    pub prometheus_enabled: bool,
     /// Whether to log every HTTP request (method, URI, status, latency, trace_id)
     /// via `stano_axum::http_request_logging_middleware`. Independent of `enabled`.
     pub http_logging_enabled: bool,
@@ -103,6 +116,10 @@ pub fn observability_config_from_env(environment: &dyn Environment) -> Observabi
             .get("STANO_OTEL_METRICS_ENABLED")
             .unwrap_or_default()
             .eq_ignore_ascii_case("true"),
+        prometheus_enabled: environment
+            .get("STANO_PROMETHEUS_ENABLED")
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("true"),
         http_logging_enabled: environment
             .get("STANO_HTTP_LOGGING_ENABLED")
             .unwrap_or_default()
@@ -117,9 +134,17 @@ pub struct OtelGuard {
     tracer_provider: Option<SdkTracerProvider>,
     meter_provider: Option<SdkMeterProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+    prometheus_registry: Option<prometheus::Registry>,
 }
 
 impl OtelGuard {
+    /// The Prometheus registry backing `GET /metrics`, present when
+    /// [`ObservabilityConfig::prometheus_enabled`] was true at [`init_observability`]
+    /// time. [`crate::server::run`] uses this to mount the scrape endpoint.
+    pub fn prometheus_registry(&self) -> Option<&prometheus::Registry> {
+        self.prometheus_registry.as_ref()
+    }
+
     /// Flushes and shuts down all configured OTel providers. Prefer calling this
     /// explicitly after your server future resolves, rather than relying solely on
     /// `Drop`, so shutdown errors can be observed.
@@ -179,14 +204,62 @@ fn build_resource(config: &ObservabilityConfig) -> Resource {
 }
 
 /// Initializes the global `tracing` subscriber (console `fmt` output, plus OTLP trace
-/// and log export when `config.enabled`), and the global OTLP meter provider when
-/// `config.enabled && config.metrics_enabled`. Must be called exactly once, before any
-/// `tracing::` calls you want captured — [`crate::server::run`] calls this itself as
-/// the first thing it does, so most apps never need to call this directly.
+/// and log export when `config.enabled`), and the global OTel meter provider — with an
+/// OTLP push reader when `config.enabled && config.metrics_enabled`, and/or a local
+/// Prometheus pull reader when `config.prometheus_enabled` (independent of
+/// `config.enabled`, since it needs no OTLP collector). Must be called exactly once,
+/// before any `tracing::` calls you want captured — [`crate::server::run`] calls this
+/// itself as the first thing it does, so most apps never need to call this directly.
 pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGuard> {
     let env_filter =
         EnvFilter::try_new(&config.log_filter).unwrap_or_else(|_| EnvFilter::new("info"));
-    let fmt_layer = tracing_subscriber::fmt::layer();
+    let fmt_layer = tracing_subscriber::fmt::layer().json();
+
+    // Resource and meter-provider construction happen regardless of `config.enabled`:
+    // the Prometheus reader is a local pull exporter with no OTLP collector dependency,
+    // so it must work even when trace/log export (gated on `enabled`) is off.
+    let resource = build_resource(config);
+
+    let mut meter_builder = SdkMeterProvider::builder().with_resource(resource.clone());
+    let mut have_meter_reader = false;
+
+    let prometheus_registry = if config.prometheus_enabled {
+        let registry = prometheus::Registry::new();
+        let exporter = opentelemetry_prometheus::exporter()
+            .with_registry(registry.clone())
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build Prometheus exporter: {e}"))?;
+        meter_builder = meter_builder.with_reader(exporter);
+        have_meter_reader = true;
+        Some(registry)
+    } else {
+        None
+    };
+
+    if config.enabled && config.metrics_enabled {
+        let metric_exporter = match config.protocol {
+            OtlpProtocol::Grpc => MetricExporter::builder()
+                .with_tonic()
+                .with_endpoint(&config.otlp_endpoint)
+                .build(),
+            OtlpProtocol::HttpProtobuf => MetricExporter::builder()
+                .with_http()
+                .with_endpoint(&config.otlp_endpoint)
+                .build(),
+        }
+        .map_err(|e| anyhow::anyhow!("failed to build OTLP metric exporter: {e}"))?;
+
+        meter_builder = meter_builder.with_periodic_exporter(metric_exporter);
+        have_meter_reader = true;
+    }
+
+    let meter_provider = if have_meter_reader {
+        let provider = meter_builder.build();
+        global::set_meter_provider(provider.clone());
+        Some(provider)
+    } else {
+        None
+    };
 
     if !config.enabled {
         tracing_subscriber::registry()
@@ -197,12 +270,11 @@ pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGu
 
         return Ok(OtelGuard {
             tracer_provider: None,
-            meter_provider: None,
+            meter_provider,
             logger_provider: None,
+            prometheus_registry,
         });
     }
-
-    let resource = build_resource(config);
 
     let span_exporter = match config.protocol {
         OtlpProtocol::Grpc => SpanExporter::builder()
@@ -246,29 +318,6 @@ pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGu
         .build();
     let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
-    let meter_provider = if config.metrics_enabled {
-        let metric_exporter = match config.protocol {
-            OtlpProtocol::Grpc => MetricExporter::builder()
-                .with_tonic()
-                .with_endpoint(&config.otlp_endpoint)
-                .build(),
-            OtlpProtocol::HttpProtobuf => MetricExporter::builder()
-                .with_http()
-                .with_endpoint(&config.otlp_endpoint)
-                .build(),
-        }
-        .map_err(|e| anyhow::anyhow!("failed to build OTLP metric exporter: {e}"))?;
-
-        let provider = SdkMeterProvider::builder()
-            .with_periodic_exporter(metric_exporter)
-            .with_resource(resource)
-            .build();
-        global::set_meter_provider(provider.clone());
-        Some(provider)
-    } else {
-        None
-    };
-
     tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt_layer)
@@ -281,6 +330,7 @@ pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGu
         tracer_provider: Some(tracer_provider),
         meter_provider,
         logger_provider: Some(logger_provider),
+        prometheus_registry,
     })
 }
 
@@ -325,6 +375,44 @@ pub async fn record_http_metrics(req: Request, next: Next) -> Response {
     response
 }
 
+async fn serve_prometheus_metrics(registry: Registry) -> Response {
+    let metric_families = registry.gather();
+    let encoder = TextEncoder::new();
+    let mut buffer = Vec::new();
+
+    if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
+        tracing::error!(error = %e, "failed to encode Prometheus metrics");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to encode metrics",
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            encoder.format_type().to_string(),
+        )],
+        buffer,
+    )
+        .into_response()
+}
+
+/// Builds a standalone router exposing `GET /metrics` (Prometheus text-exposition
+/// format) backed by `registry`. Merge this into the main app router before
+/// `.with_state(...)`, mirroring how Swagger UI is mounted — [`crate::server::run`]
+/// does this automatically when [`ObservabilityConfig::prometheus_enabled`] is true.
+pub(crate) fn prometheus_router<S: Clone + Send + Sync + 'static>(
+    registry: Registry,
+) -> axum::Router<S> {
+    axum::Router::new().route(
+        "/metrics",
+        axum::routing::get(move || serve_prometheus_metrics(registry.clone())),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +422,7 @@ mod tests {
         http::{Request, StatusCode},
         middleware,
     };
+    use opentelemetry::metrics::MeterProvider as _;
     use std::collections::HashMap;
     use tower::util::ServiceExt;
 
@@ -388,6 +477,20 @@ mod tests {
     }
 
     #[test]
+    fn config_from_env_defaults_prometheus_disabled() {
+        let env = MockEnvironment::new();
+        let config = observability_config_from_env(&env);
+        assert!(!config.prometheus_enabled);
+    }
+
+    #[test]
+    fn config_from_env_reads_prometheus_enabled_flag() {
+        let env = MockEnvironment::new().with_var("STANO_PROMETHEUS_ENABLED", "true");
+        let config = observability_config_from_env(&env);
+        assert!(config.prometheus_enabled);
+    }
+
+    #[test]
     fn disabled_config_init_returns_noop_guard() {
         let config = ObservabilityConfig {
             enabled: false,
@@ -399,6 +502,7 @@ mod tests {
             trace_sample_ratio: 1.0,
             log_filter: "info".to_string(),
             metrics_enabled: false,
+            prometheus_enabled: false,
             http_logging_enabled: false,
         };
 
@@ -423,6 +527,7 @@ mod tests {
             trace_sample_ratio: 1.0,
             log_filter: "info".to_string(),
             metrics_enabled: true,
+            prometheus_enabled: false,
             http_logging_enabled: true,
         };
 
@@ -443,6 +548,7 @@ mod tests {
             trace_sample_ratio: 1.0,
             log_filter: "info".to_string(),
             metrics_enabled: true,
+            prometheus_enabled: false,
             http_logging_enabled: true,
         };
 
@@ -495,5 +601,68 @@ mod tests {
             .expect("response");
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn prometheus_enabled_config_populates_registry_without_otlp_enabled() {
+        let config = ObservabilityConfig {
+            enabled: false,
+            otlp_endpoint: "http://127.0.0.1:1".to_string(),
+            protocol: OtlpProtocol::Grpc,
+            service_name: "test-service".to_string(),
+            service_version: "0.0.0".to_string(),
+            resource_attributes: Vec::new(),
+            trace_sample_ratio: 1.0,
+            log_filter: "info".to_string(),
+            metrics_enabled: false,
+            prometheus_enabled: true,
+            http_logging_enabled: false,
+        };
+
+        // The Prometheus reader is a local pull exporter, so it must be populated even
+        // though `enabled` (the OTLP trace/log switch) is false.
+        let guard = init_observability(&config).expect("init");
+        assert!(guard.prometheus_registry().is_some());
+        let _ = guard.shutdown();
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_prometheus_text_format() {
+        let registry = Registry::new();
+        let exporter = opentelemetry_prometheus::exporter()
+            .with_registry(registry.clone())
+            .build()
+            .expect("exporter");
+        let provider = SdkMeterProvider::builder().with_reader(exporter).build();
+        let meter = provider.meter("test");
+        meter.u64_counter("test_requests").build().add(1, &[]);
+
+        let app: Router = prometheus_router::<()>(registry).with_state(());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .expect("content-type header")
+            .to_str()
+            .expect("valid header value")
+            .to_string();
+        assert!(content_type.starts_with("text/plain"));
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body_str = String::from_utf8(body.to_vec()).expect("utf8 body");
+        assert!(body_str.contains("test_requests"));
     }
 }

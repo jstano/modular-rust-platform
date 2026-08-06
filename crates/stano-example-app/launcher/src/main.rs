@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
             trace_sample_ratio: 1.0,
             log_filter: "info".to_string(),
             metrics_enabled: false,
+            prometheus_enabled: false,
             http_logging_enabled: true,
         },
         enable_swagger: true,

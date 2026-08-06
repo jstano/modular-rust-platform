@@ -37,19 +37,20 @@ utoipa-axum = "0.2"
 ### Observability
 
 - **`ObservabilityConfig`** — OTLP tracing/metrics/log export settings.
-  - `enabled: bool` — master switch. When `false` (the default), only a local `fmt` + `EnvFilter` console subscriber is installed and no OTLP export happens — safe for local dev without a collector.
+  - `enabled: bool` — master switch. When `false` (the default), only a local `fmt` + `EnvFilter` console subscriber is installed (JSON-formatted) and no OTLP export happens — safe for local dev without a collector.
   - `otlp_endpoint: String` — collector endpoint, e.g. `http://localhost:4317` (grpc) or `http://localhost:4318` (http/protobuf).
   - `protocol: OtlpProtocol` — `Grpc` or `HttpProtobuf`, runtime-selectable (both exporter transports are compiled in).
   - `service_name: String` / `service_version: String` — OTel resource attributes.
   - `resource_attributes: Vec<(String, String)>` — additional OTel resource attributes, e.g. `("deployment.environment", "prod")`.
   - `trace_sample_ratio: f64` — trace sampling ratio in `0.0..=1.0`.
   - `log_filter: String` — `tracing_subscriber::EnvFilter` directive string, e.g. `"info,my_app=debug"`.
-  - `metrics_enabled: bool` — independently enables OTLP metrics export and the HTTP server metrics middleware (request count/duration, active requests).
+  - `metrics_enabled: bool` — independently enables OTLP metrics export (push, requires `enabled: true` and a live collector) and the HTTP server metrics middleware (request count/duration, active requests).
+  - `prometheus_enabled: bool` — independently exposes a local Prometheus scrape endpoint at `GET /metrics` (text-exposition format), serving the same metrics recorded via the global OTel meter, including HTTP server metrics when the metrics middleware is mounted. Unlike `metrics_enabled` (an OTLP *push* exporter to a collector), this is a *pull* exporter with no collector dependency, so it works even when `enabled` is `false`. Also implicitly mounts the HTTP server metrics middleware (same as `metrics_enabled`) so there's something to scrape.
   - `http_logging_enabled: bool` — independently enables `stano_axum::http_request_logging_middleware`, which logs every HTTP request (method, URI, status, latency, and the current span's OTel trace_id).
 
-- **`observability_config_from_env(environment: &dyn Environment) -> ObservabilityConfig`** — reads standard OTel env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `OTEL_SERVICE_VERSION`, `OTEL_TRACES_SAMPLER_ARG`, `RUST_LOG`) plus `STANO_OTEL_ENABLED`/`STANO_OTEL_METRICS_ENABLED`/`STANO_HTTP_LOGGING_ENABLED` (all default `false`).
+- **`observability_config_from_env(environment: &dyn Environment) -> ObservabilityConfig`** — reads standard OTel env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `OTEL_SERVICE_VERSION`, `OTEL_TRACES_SAMPLER_ARG`, `RUST_LOG`) plus `STANO_OTEL_ENABLED`/`STANO_OTEL_METRICS_ENABLED`/`STANO_PROMETHEUS_ENABLED`/`STANO_HTTP_LOGGING_ENABLED` (all default `false`).
 
-- **`OtelGuard`** — returned internally by `init_observability` and held by `run()` for the request lifetime; flushed after `axum::serve(...)` resolves so in-flight spans/metrics are exported before shutdown.
+- **`OtelGuard`** — returned internally by `init_observability` and held by `run()` for the request lifetime; flushed after `axum::serve(...)` resolves so in-flight spans/metrics are exported before shutdown. Also exposes `prometheus_registry()`, present when `prometheus_enabled` is true, which `run()` uses to mount `/metrics`.
 
 `run()` calls `init_observability(&config.observability)` as the first thing it does, so all subsequent `tracing::*!` calls (including from `stano-di`, `stano-axum`, and your own app code) are captured. No call-site changes are needed anywhere — this composes a `tracing_subscriber::Registry` that the plain `tracing` facade already flows through.
 
@@ -87,9 +88,11 @@ Applied in this request-processing order (outermost → innermost, closest to ha
 9. **Timeout** — 300-second per-request timeout.
 10. **CORS** — allow/disallow origins based on config.
 
-Additionally, when `observability.metrics_enabled` is true, an HTTP metrics middleware is applied via `route_layer` (so it only wraps matched routes, giving it access to `MatchedPath` for the `http.route` attribute) — this records `http.server.request.duration` and `http.server.active_requests` via the global OTel meter.
+Additionally, when `observability.metrics_enabled` or `observability.prometheus_enabled` is true, an HTTP metrics middleware is applied via `route_layer` (so it only wraps matched routes, giving it access to `MatchedPath` for the `http.route` attribute) — this records `http.server.request.duration` and `http.server.active_requests` via the global OTel meter.
 
 When `enable_swagger` is true, the Swagger UI router (`/swagger`, `/api-docs/openapi.json`) is merged in alongside the auto-registered and `extra_routes` routers before the middleware stack is applied, so it's subject to the same CORS/timeout/compression/security-header handling as the rest of the API.
+
+When `observability.prometheus_enabled` is true, a `GET /metrics` route is merged in the same way, before `.with_state(...)` — so it's also subject to the same CORS/timeout/compression/security-header/authorization handling as the rest of the API.
 
 ## Usage Example
 
@@ -148,7 +151,7 @@ async fn get_profile_handler(/* ... */) -> /* ... */ { /* ... */ }
 - **Route merging** — every `#[get]`/`#[post]`/etc.-annotated handler and `extra_routes` are merged into a single router, so define paths carefully to avoid collisions.
 - **Graceful shutdown** — the server responds to Ctrl+C on all platforms and SIGTERM on Unix-like systems. Connections are drained gracefully.
 - **CORS configuration** — pass `cors_origins`, `cors_origin_suffixes`, and `cors_dev_origins` all empty for permissive CORS (allow any origin); otherwise list exact origins and/or origin suffixes. Populate any of these from an env var with `parse_csv_env`, or set them directly from your app config. Set `is_dev` (via `is_dev_environment` or explicitly) to switch to `cors_dev_origins` in development.
-- **Observability is automatic, not opt-in per call** — `run()` always calls `init_observability`; set `observability.enabled = false` (the default via `observability_config_from_env`) to get a plain console subscriber and skip OTLP export entirely, e.g. for local dev without a collector. If your app already installs its own `tracing_subscriber`, don't call `run()` with `enabled: true` at the same time — only one global subscriber can be installed per process.
+- **Observability is automatic, not opt-in per call** — `run()` always calls `init_observability`; set `observability.enabled = false` (the default via `observability_config_from_env`) to get a JSON-formatted console subscriber and skip OTLP export entirely, e.g. for local dev without a collector. Console output is always JSON, whether or not OTLP export is enabled. If your app already installs its own `tracing_subscriber`, don't call `run()` with `enabled: true` at the same time — only one global subscriber can be installed per process.
 - **Swagger UI is auto-discovered, not hand-maintained** — because `#[get]`/`#[post]`/etc. generate a `#[utoipa::path]` attribute internally, the OpenAPI document served at `/api-docs/openapi.json` is generated from the same code that defines the routes. There is no separate spec file to keep in sync by hand.
 - **No feature flags** — all APIs available.
 

@@ -1,10 +1,12 @@
-use super::authorization::{Effect, Rule};
+use super::authorization::{ClaimsValidator, Effect, Rule};
 use crate::error::ApiError;
 use axum::extract::Request;
 use axum::http::{HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
 use stano_common::ServiceError;
 use stano_security::{JwtConfig, SecurityContext, decode_jwt};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tower::util::BoxCloneSyncService;
 use tower::{Layer, Service};
@@ -13,7 +15,10 @@ use tower::{Layer, Service};
 /// `.layer(...)` (or passed into `stano_launcher::run(...)`). Carries no generic over the
 /// app's claims extension type — that was resolved when `.build()` was called.
 #[derive(Clone)]
-pub struct AuthorizationLayer(Arc<CheckFn>);
+pub struct AuthorizationLayer {
+    check: Arc<dyn ErasedCheck>,
+    cookie_name: Option<String>,
+}
 
 enum Outcome {
     Allow,
@@ -21,23 +26,40 @@ enum Outcome {
     Forbidden,
 }
 
-type CheckFn =
-    dyn Fn(&Method, &str, Option<String>, &mut axum::http::Extensions) -> Outcome + Send + Sync;
+/// Type-erases the rule table over `E`, exposed as a trait object so [`AuthorizationLayer`]
+/// itself carries no generic. A trait method (rather than a `dyn Fn` closure) is used here
+/// because closures don't reliably coerce to a higher-ranked `for<'a> Fn(...) -> Pin<Box<dyn
+/// Future + 'a>>` bound — an explicit `fn check<'a>(&'a self, ...)` signature does.
+trait ErasedCheck: Send + Sync {
+    fn check<'a>(
+        &'a self,
+        method: &'a Method,
+        path: &'a str,
+        token: Option<String>,
+        extensions: &'a mut axum::http::Extensions,
+    ) -> Pin<Box<dyn Future<Output = Outcome> + Send + 'a>>;
+}
 
-pub(super) fn build_layer<E>(
+struct CheckState<E> {
     rules: Vec<Rule<E>>,
     any_request: Effect<E>,
     jwt_config: JwtConfig,
-) -> AuthorizationLayer
+    claims_validator: Option<ClaimsValidator<E>>,
+}
+
+impl<E> ErasedCheck for CheckState<E>
 where
     E: serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
 {
-    let check = move |method: &Method,
-                      path: &str,
-                      token: Option<String>,
-                      extensions: &mut axum::http::Extensions|
-          -> Outcome {
-        let effect = rules
+    fn check<'a>(
+        &'a self,
+        method: &'a Method,
+        path: &'a str,
+        token: Option<String>,
+        extensions: &'a mut axum::http::Extensions,
+    ) -> Pin<Box<dyn Future<Output = Outcome> + Send + 'a>> {
+        let effect = self
+            .rules
             .iter()
             .find(|rule| {
                 rule.methods
@@ -47,18 +69,44 @@ where
                     && rule.pattern.matches(path)
             })
             .map(|rule| rule.effect.clone())
-            .unwrap_or_else(|| any_request.clone());
+            .unwrap_or_else(|| self.any_request.clone());
 
-        apply_effect(effect, token.as_deref(), &jwt_config, extensions)
-    };
-
-    AuthorizationLayer(Arc::new(check))
+        Box::pin(apply_effect(
+            effect,
+            token,
+            &self.jwt_config,
+            self.claims_validator.as_ref(),
+            extensions,
+        ))
+    }
 }
 
-fn apply_effect<E>(
+pub(super) fn build_layer<E>(
+    rules: Vec<Rule<E>>,
+    any_request: Effect<E>,
+    jwt_config: JwtConfig,
+    claims_validator: Option<ClaimsValidator<E>>,
+    cookie_name: Option<String>,
+) -> AuthorizationLayer
+where
+    E: serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
+{
+    AuthorizationLayer {
+        check: Arc::new(CheckState {
+            rules,
+            any_request,
+            jwt_config,
+            claims_validator,
+        }),
+        cookie_name,
+    }
+}
+
+async fn apply_effect<E>(
     effect: Effect<E>,
-    token: Option<&str>,
+    token: Option<String>,
     jwt_config: &JwtConfig,
+    claims_validator: Option<&ClaimsValidator<E>>,
     extensions: &mut axum::http::Extensions,
 ) -> Outcome
 where
@@ -66,23 +114,47 @@ where
 {
     match effect {
         Effect::PermitAll => {
-            if let Some(token) = token
+            if let Some(token) = token.as_deref()
                 && let Ok(claims) = decode_jwt::<E>(token, jwt_config)
             {
-                extensions.insert(SecurityContext::new(claims));
+                let valid = match claims_validator {
+                    Some(validator) => validator(&claims).await.is_ok(),
+                    None => true,
+                };
+                if valid {
+                    extensions.insert(SecurityContext::new(claims));
+                }
             }
             Outcome::Allow
         }
-        Effect::Authenticated => match token.and_then(|t| decode_jwt::<E>(t, jwt_config).ok()) {
-            Some(claims) => {
-                extensions.insert(SecurityContext::new(claims));
-                Outcome::Allow
-            }
-            None => Outcome::Unauthorized,
-        },
-        Effect::HasRole(predicate) => {
-            match token.and_then(|t| decode_jwt::<E>(t, jwt_config).ok()) {
+        Effect::Authenticated => {
+            match token
+                .as_deref()
+                .and_then(|t| decode_jwt::<E>(t, jwt_config).ok())
+            {
                 Some(claims) => {
+                    if let Some(validator) = claims_validator
+                        && validator(&claims).await.is_err()
+                    {
+                        return Outcome::Unauthorized;
+                    }
+                    extensions.insert(SecurityContext::new(claims));
+                    Outcome::Allow
+                }
+                None => Outcome::Unauthorized,
+            }
+        }
+        Effect::HasRole(predicate) => {
+            match token
+                .as_deref()
+                .and_then(|t| decode_jwt::<E>(t, jwt_config).ok())
+            {
+                Some(claims) => {
+                    if let Some(validator) = claims_validator
+                        && validator(&claims).await.is_err()
+                    {
+                        return Outcome::Unauthorized;
+                    }
                     if predicate(&claims.ext) {
                         extensions.insert(SecurityContext::new(claims));
                         Outcome::Allow
@@ -96,12 +168,23 @@ where
     }
 }
 
-fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
+/// Extracts the bearer token from the `Authorization` header, falling back to the named
+/// cookie (if configured) when no such header is present.
+fn extract_token(headers: &HeaderMap, cookie_name: Option<&str>) -> Option<String> {
+    if let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+    {
+        return Some(token.to_string());
+    }
+
+    let cookie_name = cookie_name?;
+    let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    cookie_header.split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        (name == cookie_name).then(|| value.to_string())
+    })
 }
 
 impl<S> Layer<S> for AuthorizationLayer
@@ -113,17 +196,21 @@ where
     type Service = BoxCloneSyncService<Request, Response, S::Error>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        let check = Arc::clone(&self.0);
+        let check = Arc::clone(&self.check);
+        let cookie_name = self.cookie_name.clone();
 
         BoxCloneSyncService::new(tower::service_fn(move |mut req: Request| {
             let check = Arc::clone(&check);
+            let cookie_name = cookie_name.clone();
             let mut inner = inner.clone();
 
             async move {
                 let method = req.method().clone();
                 let path = req.uri().path().to_string();
-                let token = extract_bearer(req.headers()).map(str::to_string);
-                let outcome = check(&method, &path, token, req.extensions_mut());
+                let token = extract_token(req.headers(), cookie_name.as_deref());
+                let outcome = check
+                    .check(&method, &path, token, req.extensions_mut())
+                    .await;
 
                 match outcome {
                     Outcome::Allow => inner.call(req).await,
@@ -275,6 +362,144 @@ Z0LqHh61Pvh4ey4KjsF26ahJinyWuTrORkH3UOe/X8g6mfzHqZ2c9oo4cw==
         let app = app(&config);
         assert_eq!(
             request(&app, "/admin/x", None).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    fn app_with_validator(
+        config: &JwtConfig,
+        validator: impl Fn(&Claims<AppClaims>) -> bool + Send + Sync + 'static,
+    ) -> Router {
+        let layer = AuthorizationBuilder::<AppClaims>::new()
+            .request_matcher("/public/{*rest}")
+            .permit_all()
+            .request_matcher("/admin/{*rest}")
+            .has_role(|c: &AppClaims| c.role == "ADMIN")
+            .any_request()
+            .authenticated()
+            .with_claims_validator(move |claims: &Claims<AppClaims>| {
+                let ok = validator(claims);
+                async move {
+                    if ok {
+                        Ok(())
+                    } else {
+                        Err("rejected".to_string())
+                    }
+                }
+            })
+            .build(config.clone())
+            .expect("valid chain");
+
+        Router::new()
+            .route("/public/x", get(|| async { "ok" }))
+            .route("/admin/x", get(|| async { "ok" }))
+            .route("/other", get(|| async { "ok" }))
+            .layer(layer)
+    }
+
+    #[tokio::test]
+    async fn claims_validator_ok_allows_authenticated_request() {
+        let config = jwt_config();
+        let app = app_with_validator(&config, |_| true);
+        let token = token("USER", &config);
+        assert_eq!(request(&app, "/other", Some(&token)).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn claims_validator_err_rejects_authenticated_request() {
+        let config = jwt_config();
+        let app = app_with_validator(&config, |_| false);
+        let token = token("USER", &config);
+        assert_eq!(
+            request(&app, "/other", Some(&token)).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn claims_validator_err_rejects_has_role_request_as_unauthorized() {
+        let config = jwt_config();
+        let app = app_with_validator(&config, |_| false);
+        let token = token("ADMIN", &config);
+        // A revoked/invalid session is an authentication failure, not an authorization one —
+        // even though the role predicate would have passed, this must be 401, not 403.
+        assert_eq!(
+            request(&app, "/admin/x", Some(&token)).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn claims_validator_err_on_permit_all_still_allows_without_context() {
+        let config = jwt_config();
+        let app = app_with_validator(&config, |_| false);
+        let token = token("USER", &config);
+        // permit_all() never requires a token to begin with — a validator rejection on a
+        // present-but-untrusted token degrades to "no context", not a hard failure.
+        assert_eq!(
+            request(&app, "/public/x", Some(&token)).await,
+            StatusCode::OK
+        );
+    }
+
+    fn app_with_cookie(config: &JwtConfig) -> Router {
+        let layer = AuthorizationBuilder::<AppClaims>::new()
+            .request_matcher("/public/{*rest}")
+            .permit_all()
+            .any_request()
+            .authenticated()
+            .cookie_name("jwt_token")
+            .build(config.clone())
+            .expect("valid chain");
+
+        Router::new()
+            .route("/other", get(|| async { "ok" }))
+            .layer(layer)
+    }
+
+    async fn request_with_cookie(app: &Router, path: &str, cookie: Option<&str>) -> StatusCode {
+        let mut builder = axum::http::Request::builder().uri(path).method(Method::GET);
+        if let Some(cookie) = cookie {
+            builder = builder.header("cookie", cookie);
+        }
+        let response = app
+            .clone()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        response.status()
+    }
+
+    #[tokio::test]
+    async fn cookie_fallback_allows_authenticated_request_without_header() {
+        let config = jwt_config();
+        let app = app_with_cookie(&config);
+        let token = token("USER", &config);
+        assert_eq!(
+            request_with_cookie(&app, "/other", Some(&format!("jwt_token={token}"))).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn cookie_fallback_ignores_unrelated_cookies() {
+        let config = jwt_config();
+        let app = app_with_cookie(&config);
+        assert_eq!(
+            request_with_cookie(&app, "/other", Some("other=value")).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn no_cookie_name_configured_is_header_only() {
+        let config = jwt_config();
+        // Reuses `app`, which never calls `.cookie_name(...)` — confirms backward
+        // compatibility for consumers that don't opt in to cookie extraction.
+        let app = app(&config);
+        let token = token("USER", &config);
+        assert_eq!(
+            request_with_cookie(&app, "/other", Some(&format!("jwt_token={token}"))).await,
             StatusCode::UNAUTHORIZED
         );
     }

@@ -1,8 +1,19 @@
 use super::layer::AuthorizationLayer;
 use super::pattern::CompiledPattern;
 use axum::http::Method;
-use stano_security::JwtConfig;
+use stano_security::{Claims, JwtConfig};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+type ValidatorFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// An async hook run after successful JWT decode, before an `authenticated()`/`has_role()`
+/// rule finalizes to `Allow` (or a `permit_all()` rule with a token present inserts a
+/// [`stano_security::SecurityContext`]). Lets callers reject stale claims — e.g. a JWT whose
+/// backing session has since been revoked — with an async check (a DB lookup, typically).
+pub(super) type ClaimsValidator<E> =
+    Arc<dyn for<'a> Fn(&'a Claims<E>) -> ValidatorFuture<'a> + Send + Sync>;
 
 /// The effect applied when a request matches a configured rule.
 pub(super) enum Effect<E> {
@@ -74,6 +85,8 @@ impl std::error::Error for AuthorizationBuildError {}
 pub struct AuthorizationBuilder<E> {
     pub(super) rules: Vec<Rule<E>>,
     pub(super) any_request: Option<Effect<E>>,
+    pub(super) claims_validator: Option<ClaimsValidator<E>>,
+    pub(super) cookie_name: Option<String>,
     poisoned: Option<matchit::InsertError>,
 }
 
@@ -82,6 +95,8 @@ impl<E> Default for AuthorizationBuilder<E> {
         Self {
             rules: Vec::new(),
             any_request: None,
+            claims_validator: None,
+            cookie_name: None,
             poisoned: None,
         }
     }
@@ -117,6 +132,31 @@ where
         }
     }
 
+    /// Register an async hook run after a request's JWT decodes successfully, before the
+    /// matched rule's effect is finalized. Return `Err(reason)` to reject claims that are
+    /// structurally valid but no longer trustworthy — e.g. a JWT whose backing session has
+    /// been revoked server-side. On `authenticated()`/`has_role()` rules a rejection maps to
+    /// `401 Unauthorized`; on a `permit_all()` rule with a token present, a rejection is
+    /// treated like a failed decode (request still allowed, no `SecurityContext` inserted).
+    pub fn with_claims_validator<F, Fut>(mut self, validator: F) -> Self
+    where
+        F: Fn(&Claims<E>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), String>> + Send + 'static,
+    {
+        self.claims_validator = Some(Arc::new(move |claims: &Claims<E>| {
+            Box::pin(validator(claims)) as ValidatorFuture<'_>
+        }));
+        self
+    }
+
+    /// Configure a cookie name to fall back to for token extraction when the request has no
+    /// `Authorization` header — e.g. `"jwt_token"` for a browser client that carries its JWT
+    /// in an HttpOnly cookie instead. Unset by default (header-only, the prior behavior).
+    pub fn cookie_name(mut self, name: impl Into<String>) -> Self {
+        self.cookie_name = Some(name.into());
+        self
+    }
+
     /// Finalize the chain into a type-erased [`AuthorizationLayer`], ready to pass into
     /// `stano_launcher::run(...)`.
     pub fn build(
@@ -134,6 +174,8 @@ where
             self.rules,
             any_request,
             jwt_config,
+            self.claims_validator,
+            self.cookie_name,
         ))
     }
 }

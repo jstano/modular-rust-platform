@@ -46,6 +46,7 @@ pub async fn run(
     let otel_guard = observability::init_observability(&config.observability)?;
     let port = config.port;
     let metrics_enabled = config.observability.metrics_enabled;
+    let prometheus_enabled = config.observability.prometheus_enabled;
     let http_logging_enabled = config.observability.http_logging_enabled;
 
     let (router, openapi) = OpenApiRouter::<Arc<ApplicationContext>>::new()
@@ -60,9 +61,14 @@ pub async fn run(
             .into();
         app = app.merge(swagger_router);
     }
+    if let Some(registry) = otel_guard.prometheus_registry() {
+        app = app.merge(observability::prometheus_router::<Arc<ApplicationContext>>(
+            registry.clone(),
+        ));
+    }
     let mut app = app.with_state(Arc::clone(&ctx));
 
-    if metrics_enabled {
+    if metrics_enabled || prometheus_enabled {
         app = app.route_layer(middleware::from_fn(record_http_metrics));
     }
 
@@ -216,6 +222,7 @@ mod tests {
                 trace_sample_ratio: 1.0,
                 log_filter: "info".to_string(),
                 metrics_enabled: false,
+                prometheus_enabled: false,
                 http_logging_enabled: false,
             },
         }
@@ -445,6 +452,44 @@ mod tests {
         // `run()` only returns after graceful shutdown (Ctrl+C/SIGTERM), which this
         // test can't trigger without signaling the whole test process, so the
         // `otel_guard.shutdown()` tail of `run()` is intentionally left uncovered here.
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn run_mounts_prometheus_metrics_endpoint_when_enabled() {
+        let port = free_port().await;
+        let mut config = test_config(vec![], vec![]);
+        config.port = port;
+        config.observability.prometheus_enabled = true;
+        let ctx = Arc::new(ApplicationContext::new(Arc::new(TestEnvironment)));
+
+        let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None));
+
+        let mut stream = loop {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        };
+
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write request");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .await
+            .expect("read response");
+
+        assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+        assert!(
+            response
+                .to_ascii_lowercase()
+                .contains("content-type: text/plain")
+        );
+
         server.abort();
     }
 }

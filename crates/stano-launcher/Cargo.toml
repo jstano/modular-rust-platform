@@ -22,13 +22,15 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 tracing = "0.1"
 anyhow  = "1"
 
-tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt", "json"] }
 tracing-opentelemetry = "0.33"
 opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_metrics_custom_reader"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "logs", "metrics", "trace"] }
 opentelemetry-appender-tracing = "0.32"
 opentelemetry-semantic-conventions = "0.32"
+opentelemetry-prometheus = "0.32"
+prometheus = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
