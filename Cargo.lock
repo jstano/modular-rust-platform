@@ -2870,7 +2870,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stano-axum"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "stano-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "stano-di"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dotenvy",
  "inventory",
@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "stano-di-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2943,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "stano-common",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-infrastructure"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-common",
  "stano-di",
@@ -2963,7 +2963,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-rest-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "serde",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "stano-security",
@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "stano-example-services"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-common",
  "stano-di",
@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "stano-launcher"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "stano-route-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "stano-seaorm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sea-orm",
  "stano-di",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "stano-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonwebtoken",
  "serde",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "stano-starter"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-common",
  "stano-di",
@@ -3064,14 +3064,14 @@ dependencies = [
 
 [[package]]
 name = "stano-starter-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-starter",
 ]
 
 [[package]]
 name = "stano-starter-rest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-axum",
  "stano-di",
@@ -3080,7 +3080,7 @@ dependencies = [
 
 [[package]]
 name = "stano-starter-service"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "stano-security",
  "stano-starter",

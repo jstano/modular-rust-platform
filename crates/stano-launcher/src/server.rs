@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 use tower_http::{
     catch_panic::CatchPanicLayer,
     compression::CompressionLayer,
-    cors::{AllowOrigin, Any, CorsLayer},
+    cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
@@ -180,8 +180,9 @@ fn cors_layer(config: &BootstrapConfig) -> CorsLayer {
 
         return CorsLayer::new()
             .allow_origin(dev_origins)
-            .allow_methods(Any)
-            .allow_headers(Any);
+            .allow_methods(AllowMethods::mirror_request())
+            .allow_headers(AllowHeaders::mirror_request())
+            .allow_credentials(true);
     }
 
     if config.cors_origins.is_empty() && config.cors_origin_suffixes.is_empty() {
@@ -200,8 +201,9 @@ fn cors_layer(config: &BootstrapConfig) -> CorsLayer {
                     })
                     .unwrap_or(false)
             }))
-            .allow_methods(Any)
-            .allow_headers(Any)
+            .allow_methods(AllowMethods::mirror_request())
+            .allow_headers(AllowHeaders::mirror_request())
+            .allow_credentials(true)
     }
 }
 
@@ -315,6 +317,13 @@ mod tests {
             .and_then(|v| v.to_str().ok())
     }
 
+    fn allow_credentials_header(response: &axum::response::Response) -> Option<&str> {
+        response
+            .headers()
+            .get("access-control-allow-credentials")
+            .and_then(|v| v.to_str().ok())
+    }
+
     #[tokio::test]
     async fn permissive_when_config_empty() {
         let config = test_config(vec![], vec![]);
@@ -330,6 +339,7 @@ mod tests {
             allow_origin_header(&response),
             Some("http://localhost:5173")
         );
+        assert_eq!(allow_credentials_header(&response), Some("true"));
     }
 
     #[tokio::test]
@@ -347,6 +357,7 @@ mod tests {
             allow_origin_header(&response),
             Some("https://foo.example.com")
         );
+        assert_eq!(allow_credentials_header(&response), Some("true"));
     }
 
     #[tokio::test]
@@ -367,6 +378,7 @@ mod tests {
             allow_origin_header(&response),
             Some("http://localhost:5173")
         );
+        assert_eq!(allow_credentials_header(&response), Some("true"));
     }
 
     #[tokio::test]
@@ -665,10 +677,13 @@ mod tests {
             .expect("read response");
 
         assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+        let lower = response.to_ascii_lowercase();
         assert!(
-            response
-                .to_ascii_lowercase()
-                .contains("access-control-allow-origin: http://localhost:5173"),
+            lower.contains("access-control-allow-origin: http://localhost:5173"),
+            "got: {response}"
+        );
+        assert!(
+            lower.contains("access-control-allow-credentials: true"),
             "got: {response}"
         );
 

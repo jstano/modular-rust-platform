@@ -22,21 +22,21 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jstano/modular-rust-platform"
 homepage = "https://github.com/jstano/modular-rust-platform"
 
 [workspace.dependencies]
-stano-common = { path = "crates/stano-common", version = "0.1.0" }
-stano-di = { path = "crates/stano-di", version = "0.1.0" }
-stano-di-macros = { path = "crates/stano-di-macros", version = "0.1.0" }
-stano-route-macros = { path = "crates/stano-route-macros", version = "0.1.0" }
-stano-security = { path = "crates/stano-security", version = "0.1.0" }
-stano-axum = { path = "crates/stano-axum", version = "0.1.0" }
-stano-launcher = { path = "crates/stano-launcher", version = "0.1.0" }
-stano-seaorm = { path = "crates/stano-seaorm", version = "0.1.0" }
-stano-starter = { path = "crates/stano-starter", version = "0.1.0" }
-stano-starter-domain = { path = "crates/stano-starter-domain", version = "0.1.0" }
-stano-starter-rest = { path = "crates/stano-starter-rest", version = "0.1.0" }
-stano-starter-service = { path = "crates/stano-starter-service", version = "0.1.0" }
+stano-common = { path = "crates/stano-common", version = "0.2.0" }
+stano-di = { path = "crates/stano-di", version = "0.2.0" }
+stano-di-macros = { path = "crates/stano-di-macros", version = "0.2.0" }
+stano-route-macros = { path = "crates/stano-route-macros", version = "0.2.0" }
+stano-security = { path = "crates/stano-security", version = "0.2.0" }
+stano-axum = { path = "crates/stano-axum", version = "0.2.0" }
+stano-launcher = { path = "crates/stano-launcher", version = "0.2.0" }
+stano-seaorm = { path = "crates/stano-seaorm", version = "0.2.0" }
+stano-starter = { path = "crates/stano-starter", version = "0.2.0" }
+stano-starter-domain = { path = "crates/stano-starter-domain", version = "0.2.0" }
+stano-starter-rest = { path = "crates/stano-starter-rest", version = "0.2.0" }
+stano-starter-service = { path = "crates/stano-starter-service", version = "0.2.0" }
