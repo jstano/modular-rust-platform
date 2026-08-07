@@ -2,6 +2,11 @@
 name = "stano-seaorm"
 version.workspace = true
 edition = "2024"
+description = "Postgres pool configuration and domain<->entity Mapper<T> trait for SeaORM on the Stano platform"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-seaorm"
 
 [dependencies]
 stano-di = { workspace = true }

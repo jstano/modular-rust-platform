@@ -2,6 +2,11 @@
 name = "stano-axum"
 version.workspace = true
 edition = "2024"
+description = "Axum HTTP extractors, unified ApiError type, error-logging middleware, declarative request-authorization, and route auto-registration for the Stano platform"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-axum"
 
 [dependencies]
 stano-common = { workspace = true }

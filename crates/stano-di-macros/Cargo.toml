@@ -2,6 +2,11 @@
 name = "stano-di-macros"
 version.workspace = true
 edition = "2024"
+description = "Proc macros (#[component], #[service]) that generate boilerplate and auto-register components for stano-di"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-di-macros"
 
 [lib]
 proc-macro = true

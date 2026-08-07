@@ -2,6 +2,11 @@
 name = "stano-security"
 version.workspace = true
 edition = "2024"
+description = "JWT encode/decode (ES256) and generic SecurityContext<E> for auth on the Stano platform"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-security"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

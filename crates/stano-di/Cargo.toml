@@ -2,6 +2,11 @@
 name = "stano-di"
 version.workspace = true
 edition = "2024"
+description = "Lightweight dependency injection container with lazy singleton resolution, cycle detection, and async-safe validation"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-di"
 
 [dependencies]
 dotenvy = "0.15.7"

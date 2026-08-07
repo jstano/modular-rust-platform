@@ -23,6 +23,9 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jstano/modular-rust-platform"
+homepage = "https://github.com/jstano/modular-rust-platform"
 
 [workspace.dependencies]
 stano-common = { path = "crates/stano-common", version = "0.1.0" }

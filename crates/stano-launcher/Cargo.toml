@@ -2,6 +2,11 @@
 name = "stano-launcher"
 version.workspace = true
 edition = "2024"
+description = "App bootstrap for the Stano platform: wires the Axum router, applies the middleware stack, and handles graceful shutdown"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-launcher"
 
 [dependencies]
 stano-di           = { workspace = true }

@@ -2,6 +2,11 @@
 name = "stano-starter"
 version.workspace = true
 edition = "2024"
+description = "Base scaffolding crate for apps built on the Stano platform, shared setup atop stano-common and stano-di"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-starter"
 
 [dependencies]
 stano-common    = { workspace = true }

@@ -2,6 +2,11 @@
 name = "stano-starter-rest"
 version.workspace = true
 edition = "2024"
+description = "Example REST adapter facade wiring stano-axum, stano-di, and stano-security for the Stano platform"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-starter-rest"
 
 [dependencies]
 stano-di       = { workspace = true }

@@ -2,6 +2,11 @@
 name = "stano-starter-service"
 version.workspace = true
 edition = "2024"
+description = "Example service layer built on stano-starter and stano-security for the Stano platform"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/stano-starter-service"
 
 [dependencies]
 stano-starter  = { workspace = true }
