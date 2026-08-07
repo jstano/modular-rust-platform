@@ -14,4 +14,4 @@ proc-macro-crate = "3"
 
 [dev-dependencies]
 trybuild = "1"
-stano-di = { path = "../stano-di" }
+stano-di = { workspace = true }

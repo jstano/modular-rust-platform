@@ -4,9 +4,9 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-stano-di           = { path = "../stano-di" }
-stano-security     = { path = "../stano-security" }
-stano-axum         = { path = "../stano-axum" }
+stano-di           = { workspace = true }
+stano-security     = { workspace = true }
+stano-axum         = { workspace = true }
 
 tokio          = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 axum           = { version = "0.8.7" }

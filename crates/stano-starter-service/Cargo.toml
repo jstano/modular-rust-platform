@@ -4,5 +4,5 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-stano-starter  = { path = "../stano-starter" }
-stano-security = { path = "../stano-security" }
+stano-starter  = { workspace = true }
+stano-security = { workspace = true }

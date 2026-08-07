@@ -4,6 +4,6 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-stano-common    = { path = "../stano-common" }
-stano-di        = { path = "../stano-di" }
-stano-di-macros = { path = "../stano-di-macros" }
+stano-common    = { workspace = true }
+stano-di        = { workspace = true }
+stano-di-macros = { workspace = true }

@@ -4,10 +4,10 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-stano-common = { path = "../stano-common" }
-stano-di = { path = "../stano-di" }
-stano-route-macros = { path = "../stano-route-macros" }
-stano-security = { path = "../stano-security" }
+stano-common = { workspace = true }
+stano-di = { workspace = true }
+stano-route-macros = { workspace = true }
+stano-security = { workspace = true }
 axum = { version = "0.8.7", features = ["multipart"] }
 serde = { version = "1", features = ["derive"] }
 utoipa = { version = "5", features = ["macros"] }

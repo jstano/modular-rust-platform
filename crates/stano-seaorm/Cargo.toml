@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-stano-di = { path = "../stano-di" }
+stano-di = { workspace = true }
 
 sea-orm = { version = "1.1.0", features = ["runtime-tokio-rustls", "sqlx-postgres"] }
 thiserror = "2"
