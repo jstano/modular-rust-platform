@@ -469,6 +469,23 @@ mod tests {
         listener.local_addr().expect("local addr").port()
     }
 
+    /// Connects to a port `run()` should be listening on, retrying briefly while the
+    /// server task starts up. Bounded so a `run()` that errors before binding (e.g. a
+    /// config/observability failure) fails the test fast with a clear message instead
+    /// of retrying forever.
+    async fn connect_with_retry(port: u16) -> tokio::net::TcpStream {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                    Ok(stream) => return stream,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for server to start listening")
+    }
+
     #[tokio::test]
     async fn run_binds_listener_and_serves_requests_through_the_middleware_stack() {
         let port = free_port().await;
@@ -478,12 +495,7 @@ mod tests {
 
         let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None, None, None));
 
-        let mut stream = loop {
-            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                Ok(stream) => break stream,
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        };
+        let mut stream = connect_with_retry(port).await;
 
         stream
             .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -527,12 +539,7 @@ mod tests {
 
         let server = tokio::spawn(run(ctx, OpenApiRouter::new(), config, None, None, None));
 
-        let mut stream = loop {
-            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                Ok(stream) => break stream,
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        };
+        let mut stream = connect_with_retry(port).await;
 
         stream
             .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -583,12 +590,7 @@ mod tests {
             Some(register),
         ));
 
-        let mut stream = loop {
-            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                Ok(stream) => break stream,
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        };
+        let mut stream = connect_with_retry(port).await;
 
         stream
             .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -643,12 +645,7 @@ mod tests {
             None,
         ));
 
-        let mut stream = loop {
-            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                Ok(stream) => break stream,
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        };
+        let mut stream = connect_with_retry(port).await;
 
         stream
             .write_all(

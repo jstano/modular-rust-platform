@@ -262,11 +262,14 @@ pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGu
     };
 
     if !config.enabled {
-        tracing_subscriber::registry()
+        // Installing the global `tracing` subscriber can only succeed once per
+        // process; a later caller "failing" here just means an earlier one already
+        // won that race (e.g. multiple tests in the same binary). That's not fatal —
+        // the meter provider / Prometheus registry built above are still valid.
+        let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
-            .try_init()
-            .map_err(|e| anyhow::anyhow!("failed to install tracing subscriber: {e}"))?;
+            .try_init();
 
         return Ok(OtelGuard {
             tracer_provider: None,
@@ -318,13 +321,14 @@ pub fn init_observability(config: &ObservabilityConfig) -> anyhow::Result<OtelGu
         .build();
     let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
-    tracing_subscriber::registry()
+    // Same non-fatal treatment as above: another caller in this process may already
+    // have installed the global subscriber.
+    let _ = tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt_layer)
         .with(otel_trace_layer)
         .with(otel_log_layer)
-        .try_init()
-        .map_err(|e| anyhow::anyhow!("failed to install tracing subscriber: {e}"))?;
+        .try_init();
 
     Ok(OtelGuard {
         tracer_provider: Some(tracer_provider),
@@ -506,13 +510,8 @@ mod tests {
             http_logging_enabled: false,
         };
 
-        // May fail to install if another test already installed a global subscriber in
-        // this process — either outcome (Ok or the "already set" error) is acceptable;
-        // what matters is that it never panics.
-        let result = init_observability(&config);
-        if let Ok(guard) = result {
-            assert!(guard.shutdown().is_ok());
-        }
+        let guard = init_observability(&config).expect("init");
+        assert!(guard.shutdown().is_ok());
     }
 
     #[tokio::test]
