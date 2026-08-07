@@ -34,5 +34,13 @@ async fn main() -> anyhow::Result<()> {
         enable_swagger: true,
     };
 
-    run(ctx, OpenApiRouter::new(), config, Some(authorization)).await
+    run(
+        ctx,
+        OpenApiRouter::new(),
+        config,
+        Some(authorization),
+        None,
+        None,
+    )
+    .await
 }
