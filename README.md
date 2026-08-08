@@ -311,6 +311,32 @@ All crates are:
 - ✅ Test-covered
 - ✅ Properly documented
 
+## Observability
+
+`stano-launcher` wires OTLP-based tracing, metrics, and log export automatically via `stano_launcher::observability::init_observability`, which `run()` calls before building the router. Everything is opt-in and safe for local dev with no collector running — with no env vars set, you get local `fmt`/JSON console logging only.
+
+**Env vars** (read via `stano_di::environment::Environment`, so `.env` works too):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `STANO_OTEL_ENABLED` | `false` | Master switch — enables OTLP trace and log export |
+| `STANO_OTEL_METRICS_ENABLED` | `false` | Enables OTLP metric export (independent of `STANO_OTEL_ENABLED`) |
+| `STANO_PROMETHEUS_ENABLED` | `false` | Exposes a local Prometheus scrape endpoint at `GET /metrics` — no collector required |
+| `STANO_HTTP_LOGGING_ENABLED` | `false` | Logs every HTTP request (method, URI, status, latency, `trace_id`) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc` (port 4317) or `http/protobuf` (port 4318) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` / `:4318` | Collector endpoint, protocol-dependent default |
+| `OTEL_SERVICE_NAME` | `stano-app` | `service.name` resource attribute |
+| `OTEL_SERVICE_VERSION` | `0.0.0` | `service.version` resource attribute |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Trace sampling ratio (`0.0`–`1.0`) |
+| `RUST_LOG` | `info` | `tracing_subscriber::EnvFilter` directive string |
+
+**What you get:**
+- **Traces** — OTLP spans via `tracing_opentelemetry`, so any `tracing::span!`/`#[tracing::instrument]` and the `TraceLayer` request span are exported automatically once `STANO_OTEL_ENABLED=true`.
+- **Metrics** — either pushed to an OTLP collector (`STANO_OTEL_METRICS_ENABLED=true`) and/or scraped locally via Prometheus (`STANO_PROMETHEUS_ENABLED=true`); built-in HTTP server metrics (`http.server.request.duration`, `http.server.active_requests`) are recorded automatically when metrics are enabled.
+- **Logs** — every `tracing::` event is exported as an OTLP log record once `STANO_OTEL_ENABLED=true`, alongside the always-on local JSON console output.
+
+`stano-seaorm` mirrors this pattern for DB query tracing (`STANO_DB_TRACING_ENABLED`, `STANO_DB_TRACING_INCLUDE_STATEMENT`, `STANO_DB_SLOW_QUERY_MS`), emitting `tracing` events per query rather than dedicated spans.
+
 ## Middleware Stack
 
 `stano-launcher` applies this stack in request-processing order (outermost/first-to-see-request → innermost/closest-to-handlers):
