@@ -20,7 +20,6 @@ async fn main() -> anyhow::Result<()> {
         // No OTLP collector required to run this example: observability export stays off.
         observability: ObservabilityConfig {
             enabled: false,
-            otlp_endpoint: String::new(),
             protocol: OtlpProtocol::Grpc,
             service_name: "stano-example-app".to_string(),
             service_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -30,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
             metrics_enabled: false,
             prometheus_enabled: false,
             http_logging_enabled: true,
+            process_metrics_enabled: false,
         },
         enable_swagger: true,
     };

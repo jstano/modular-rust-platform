@@ -96,16 +96,29 @@ pub async fn run(
         app = app.route_layer(middleware::from_fn(record_http_metrics));
     }
 
-    let mut app = app
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(300),
-        ))
-        .layer(TraceLayer::new_for_http());
+    let mut app = app.layer(TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        Duration::from_secs(300),
+    ));
 
+    // `http_request_logging_middleware` must be layered *before* (i.e. inner to)
+    // `TraceLayer`, so its whole execution — including the `tracing::Span::current()`
+    // read after `next.run(...)` returns — happens within the scope of the span
+    // `TraceLayer` creates per request. Layered the other way around, the logging
+    // middleware would run outside that span and could never see its OTel trace id.
     if http_logging_enabled {
         app = app.layer(middleware::from_fn(http_request_logging_middleware));
     }
+
+    // `.make_span_with(... .level(Level::INFO))` ensures the per-request span is
+    // always created regardless of the deployment's `RUST_LOG` default — the
+    // default `DefaultMakeSpan` level is `DEBUG`, which gets filtered out (and the
+    // span never constructed) under a typical `RUST_LOG=info`, silently breaking
+    // OTel trace id propagation even when OTel export is otherwise enabled.
+    let app = app.layer(
+        TraceLayer::new_for_http()
+            .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO)),
+    );
 
     let mut app = app
         .layer(middleware::from_fn(error_logging_middleware))
@@ -278,7 +291,6 @@ mod tests {
             enable_swagger: false,
             observability: ObservabilityConfig {
                 enabled: false,
-                otlp_endpoint: String::new(),
                 protocol: OtlpProtocol::Grpc,
                 service_name: "test-service".to_string(),
                 service_version: "0.0.0".to_string(),
@@ -288,6 +300,7 @@ mod tests {
                 metrics_enabled: false,
                 prometheus_enabled: false,
                 http_logging_enabled: false,
+                process_metrics_enabled: false,
             },
         }
     }

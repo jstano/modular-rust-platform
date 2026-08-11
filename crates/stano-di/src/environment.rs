@@ -102,36 +102,36 @@ mod tests {
     #[test]
     fn test_os_environment_get_returns_value() {
         unsafe {
-            std::env::set_var("STANO_DI_TEST_ENV_VAR_UNIQUE_1", "value1");
+            std::env::set_var("MRP_DI_TEST_ENV_VAR_UNIQUE_1", "value1");
         }
         let env = OsEnvironment;
         assert_eq!(
-            env.get("STANO_DI_TEST_ENV_VAR_UNIQUE_1"),
+            env.get("MRP_DI_TEST_ENV_VAR_UNIQUE_1"),
             Some("value1".to_string())
         );
         unsafe {
-            std::env::remove_var("STANO_DI_TEST_ENV_VAR_UNIQUE_1");
+            std::env::remove_var("MRP_DI_TEST_ENV_VAR_UNIQUE_1");
         }
     }
 
     #[test]
     fn test_os_environment_get_missing_returns_none() {
         let env = OsEnvironment;
-        assert_eq!(env.get("STANO_DI_TEST_ENV_VAR_DOES_NOT_EXIST_XYZ"), None);
+        assert_eq!(env.get("MRP_DI_TEST_ENV_VAR_DOES_NOT_EXIST_XYZ"), None);
     }
 
     #[test]
     fn test_os_environment_new_reads_process_env() {
         unsafe {
-            std::env::set_var("STANO_DI_TEST_ENV_VAR_NEW_CTOR", "value2");
+            std::env::set_var("MRP_DI_TEST_ENV_VAR_NEW_CTOR", "value2");
         }
         let env = OsEnvironment::new();
         assert_eq!(
-            env.get("STANO_DI_TEST_ENV_VAR_NEW_CTOR"),
+            env.get("MRP_DI_TEST_ENV_VAR_NEW_CTOR"),
             Some("value2".to_string())
         );
         unsafe {
-            std::env::remove_var("STANO_DI_TEST_ENV_VAR_NEW_CTOR");
+            std::env::remove_var("MRP_DI_TEST_ENV_VAR_NEW_CTOR");
         }
     }
 }

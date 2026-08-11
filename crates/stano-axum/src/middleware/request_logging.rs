@@ -8,8 +8,15 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 /// Middleware that logs every HTTP request with method, URI, status, latency,
 /// and the current span's OpenTelemetry trace ID.
 ///
-/// When OTLP export is disabled, `trace_id` will be the all-zero sentinel
-/// since no `tracing-opentelemetry` layer is installed in that mode.
+/// `trace_id` will be the all-zero sentinel unless all of the following hold:
+/// - OTel export is enabled, so a `tracing-opentelemetry` layer is installed
+///   (see `stano_launcher::observability::init_observability`);
+/// - the per-request tracing span this middleware reads (created by the
+///   `TraceLayer` it must run inside) is actually constructed rather than
+///   filtered out by the ambient `EnvFilter`/`RUST_LOG` level; and
+/// - this middleware is layered *inside* (i.e. added before) that `TraceLayer`,
+///   so its `tracing::Span::current()` read after `next.run(...)` returns still
+///   observes the span, rather than running outside its scope entirely.
 pub async fn http_request_logging_middleware(request: Request, next: Next) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();

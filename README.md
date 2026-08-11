@@ -319,23 +319,51 @@ All crates are:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `STANO_OTEL_ENABLED` | `false` | Master switch — enables OTLP trace and log export |
-| `STANO_OTEL_METRICS_ENABLED` | `false` | Enables OTLP metric export (independent of `STANO_OTEL_ENABLED`) |
-| `STANO_PROMETHEUS_ENABLED` | `false` | Exposes a local Prometheus scrape endpoint at `GET /metrics` — no collector required |
-| `STANO_HTTP_LOGGING_ENABLED` | `false` | Logs every HTTP request (method, URI, status, latency, `trace_id`) |
+| `MRP_OTEL_ENABLED` | `false` | Master switch — enables OTLP trace and log export |
+| `MRP_OTEL_METRICS_ENABLED` | `false` | Enables OTLP metric export (independent of `MRP_OTEL_ENABLED`) |
+| `MRP_PROMETHEUS_ENABLED` | `false` | Exposes a local Prometheus scrape endpoint at `GET /metrics` — no collector required |
+| `MRP_HTTP_LOGGING_ENABLED` | `false` | Logs every HTTP request (method, URI, status, latency, `trace_id`) |
+| `MRP_PROCESS_METRICS_ENABLED` | `false` | Records process CPU/memory/disk-I/O metrics on an interval — only takes effect alongside `MRP_OTEL_METRICS_ENABLED` and/or `MRP_PROMETHEUS_ENABLED` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc` (port 4317) or `http/protobuf` (port 4318) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` / `:4318` | Collector endpoint, protocol-dependent default |
 | `OTEL_SERVICE_NAME` | `stano-app` | `service.name` resource attribute |
 | `OTEL_SERVICE_VERSION` | `0.0.0` | `service.version` resource attribute |
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Trace sampling ratio (`0.0`–`1.0`) |
 | `RUST_LOG` | `info` | `tracing_subscriber::EnvFilter` directive string |
 
-**What you get:**
-- **Traces** — OTLP spans via `tracing_opentelemetry`, so any `tracing::span!`/`#[tracing::instrument]` and the `TraceLayer` request span are exported automatically once `STANO_OTEL_ENABLED=true`.
-- **Metrics** — either pushed to an OTLP collector (`STANO_OTEL_METRICS_ENABLED=true`) and/or scraped locally via Prometheus (`STANO_PROMETHEUS_ENABLED=true`); built-in HTTP server metrics (`http.server.request.duration`, `http.server.active_requests`) are recorded automatically when metrics are enabled.
-- **Logs** — every `tracing::` event is exported as an OTLP log record once `STANO_OTEL_ENABLED=true`, alongside the always-on local JSON console output.
+The `OTEL_*` vars above are a small subset of the full OpenTelemetry spec — see the [SDK environment variables spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) for the complete list (resource attributes, propagators, log level, etc.).
 
-`stano-seaorm` mirrors this pattern for DB query tracing (`STANO_DB_TRACING_ENABLED`, `STANO_DB_TRACING_INCLUDE_STATEMENT`, `STANO_DB_SLOW_QUERY_MS`), emitting `tracing` events per query rather than dedicated spans.
+Notably absent from that table: `OTEL_EXPORTER_OTLP_ENDPOINT`. `stano-launcher` doesn't read it — like the header vars below, it's read directly by `opentelemetry-otlp` from the real process environment, which also gets you the OTLP-spec-required `/v1/traces`/`/v1/logs`/`/v1/metrics` path suffix appended automatically for HTTP/protobuf (defaults to `http://localhost:4317` grpc / `http://localhost:4318` http/protobuf if unset). Point it at just the base collector URL — for a sub-pathed backend like OpenObserve (`http://host:5080/api/<org>`), that base path is enough; don't append the signal path yourself.
+
+**What you get:**
+- **Traces** — OTLP spans via `tracing_opentelemetry`, so any `tracing::span!`/`#[tracing::instrument]` and the `TraceLayer` request span are exported automatically once `MRP_OTEL_ENABLED=true`.
+- **Metrics** — either pushed to an OTLP collector (`MRP_OTEL_METRICS_ENABLED=true`) and/or scraped locally via Prometheus (`MRP_PROMETHEUS_ENABLED=true`); built-in HTTP server metrics (`http.server.request.duration`, `http.server.active_requests`) are recorded automatically when metrics are enabled. A few more instruments layer on top, each independently opt-in:
+  - `stano-seaorm` records a `db.client.operation.duration` histogram per query, plus a `db.client.connection.count` pool-utilization gauge, whenever its own query tracing is enabled (`MRP_DB_TRACING_ENABLED=true`) — see its README for details.
+  - `stano-axum`'s `AuthorizationLayer` records an `http.server.auth.failures` counter on every `401`/`403` it produces — always on wherever `AuthorizationLayer` is configured, no separate switch (it's cheap, and security-relevant enough not to be optional).
+  - `MRP_PROCESS_METRICS_ENABLED=true` spawns a background process CPU/memory/disk-I/O observer (`process.cpu.usage`, `process.memory.usage`, etc., via the `opentelemetry-system-metrics` crate) — off by default, since container/orchestration-level scraping (cAdvisor, kubelet, Docker stats) usually already covers this more accurately than in-process self-reporting.
+- **Logs** — every `tracing::` event is exported as an OTLP log record once `MRP_OTEL_ENABLED=true`, alongside the always-on local JSON console output.
+
+**Securing the OTLP connection:** `stano-launcher` doesn't add its own auth mechanism — it builds exporters via `opentelemetry-otlp`'s standard `.with_http()`/`.with_tonic()` builders, which read the OTel-spec header env vars directly, so any collector/backend that authenticates via request headers (basic auth, API key, bearer token, tenant header, etc.) is configured purely through env vars, no code changes needed:
+
+| Var | Purpose |
+|---|---|
+| `OTEL_EXPORTER_OTLP_HEADERS` | Comma-separated `key=value` pairs sent with every export (traces, logs, metrics), e.g. `Authorization=Basic <placeholder>,X-Tenant=<placeholder>` |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Same, traces only — overrides the general var for traces |
+| `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | Same, logs only |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | Same, metrics only |
+
+These, along with other OTLP exporter settings (timeouts, compression, TLS certs) not wired up here, are documented in the [OTLP exporter spec](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) — support for any given var also depends on the version of `opentelemetry-otlp` this workspace has pinned in `Cargo.toml`.
+
+Never commit real header values — treat them like any other secret (inject via `.env` locally, or your deployment platform's secret store in other environments). Example for a backend needing HTTP basic auth plus a tenant/stream header:
+
+```bash
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=<placeholder-collector-endpoint>
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <placeholder-base64-credentials>,stream-name=<placeholder-stream>
+```
+
+If instead you're exporting to a local OTel Collector that forwards to the backend, put the auth headers in the collector's own exporter config (`exporters.otlphttp/<name>.headers`) — the app→collector hop can then stay unauthenticated on a trusted network, and only the collector needs the real credentials.
+
+`stano-seaorm` mirrors this pattern for DB query tracing (`MRP_DB_TRACING_ENABLED`, `MRP_DB_TRACING_INCLUDE_STATEMENT`, `MRP_DB_SLOW_QUERY_MS`), emitting `tracing` events per query rather than dedicated spans.
 
 ## Middleware Stack
 

@@ -35,6 +35,7 @@ opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto",
 opentelemetry-appender-tracing = "0.32"
 opentelemetry-semantic-conventions = "0.32"
 opentelemetry-prometheus = "0.32"
+opentelemetry-system-metrics = "0.32"
 prometheus = { version = "0.14", default-features = false }
 
 [dev-dependencies]

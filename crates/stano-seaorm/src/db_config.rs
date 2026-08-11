@@ -28,9 +28,13 @@ impl DbConfig {
     /// - max_lifetime: 1h
     ///
     /// When `tracing_config.enabled`, installs a `set_metric_callback` that emits a
-    /// `stano_seaorm::query` tracing event per SQL statement (see
-    /// [`crate::QueryTracingConfig`]), and disables sea-orm's own `sqlx_logging` to
-    /// avoid duplicate log lines for the same query.
+    /// `stano_seaorm::query` tracing event per SQL statement, records a
+    /// `db.client.operation.duration` histogram, registers a
+    /// `db.client.connection.count` pool-utilization gauge, and synthesizes a backdated
+    /// per-query OTel span (`db.operation`-named, `SpanKind::Client`) nested under
+    /// whatever ambient tracing span was active when the query ran (see
+    /// [`query_tracing::query_tracing_callback`] for all four), and disables sea-orm's
+    /// own `sqlx_logging` to avoid duplicate log lines for the same query.
     pub async fn from_url(
         database_url: &str,
         tracing_config: QueryTracingConfig,
@@ -52,7 +56,9 @@ impl DbConfig {
             .map_err(|e| DbConfigError::ConnectionFailed(e.to_string()))?;
 
         if tracing_config.enabled {
-            connection.set_metric_callback(query_tracing::query_tracing_callback(tracing_config));
+            let pool = connection.get_postgres_connection_pool().clone();
+            connection
+                .set_metric_callback(query_tracing::query_tracing_callback(tracing_config, pool));
         }
 
         Ok(Self { connection })

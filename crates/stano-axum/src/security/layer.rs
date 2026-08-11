@@ -3,11 +3,12 @@ use crate::error::ApiError;
 use axum::extract::Request;
 use axum::http::{HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
+use opentelemetry::{KeyValue, global, metrics::Counter};
 use stano_common::ServiceError;
 use stano_security::{JwtConfig, SecurityContext, decode_jwt};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tower::util::BoxCloneSyncService;
 use tower::{Layer, Service};
 
@@ -18,6 +19,19 @@ use tower::{Layer, Service};
 pub struct AuthorizationLayer {
     check: Arc<dyn ErasedCheck>,
     cookie_name: Option<String>,
+    /// `http.server.auth.failures` OTel counter, incremented once per `401`/`403`
+    /// produced by this layer (never on `Allow`). Resolved lazily, on first actual
+    /// rejection, not eagerly in [`build_layer`] — `opentelemetry::global::meter(...)`
+    /// permanently binds to whichever `MeterProvider` is installed *at the moment it's
+    /// called*, and does not retroactively pick up a real provider installed later via
+    /// `set_meter_provider`. Apps commonly call `.build(jwt_config)` (which calls
+    /// `build_layer`) during route/middleware wiring, before `stano_launcher::run()`
+    /// (which is what installs the real provider) — so resolving eagerly here would
+    /// silently bind this counter to a no-op provider forever. `Arc<OnceLock<...>>`
+    /// (rather than a bare `OnceLock`) so every `Clone` of this layer — e.g. once per
+    /// `tower::Layer::layer` call — shares the same lazily-initialized counter instead
+    /// of each independently registering its own.
+    failure_counter: Arc<OnceLock<Counter<u64>>>,
 }
 
 enum Outcome {
@@ -99,6 +113,7 @@ where
             claims_validator,
         }),
         cookie_name,
+        failure_counter: Arc::new(OnceLock::new()),
     }
 }
 
@@ -198,10 +213,12 @@ where
     fn layer(&self, inner: S) -> Self::Service {
         let check = Arc::clone(&self.check);
         let cookie_name = self.cookie_name.clone();
+        let failure_counter = self.failure_counter.clone();
 
         BoxCloneSyncService::new(tower::service_fn(move |mut req: Request| {
             let check = Arc::clone(&check);
             let cookie_name = cookie_name.clone();
+            let failure_counter = failure_counter.clone();
             let mut inner = inner.clone();
 
             async move {
@@ -211,6 +228,33 @@ where
                 let outcome = check
                     .check(&method, &path, token, req.extensions_mut())
                     .await;
+
+                let failure_status = match outcome {
+                    Outcome::Allow => None,
+                    Outcome::Unauthorized => Some(401),
+                    Outcome::Forbidden => Some(403),
+                };
+
+                if let Some(status) = failure_status {
+                    // Resolved lazily on first rejection — see the doc comment on
+                    // `AuthorizationLayer::failure_counter` for why this can't be built
+                    // eagerly in `build_layer`.
+                    let counter = failure_counter.get_or_init(|| {
+                        global::meter("stano-axum")
+                            .u64_counter("http.server.auth.failures")
+                            .with_description(
+                                "Count of requests rejected by AuthorizationLayer, by status",
+                            )
+                            .build()
+                    });
+                    counter.add(
+                        1,
+                        &[
+                            KeyValue::new("http.request.method", method.to_string()),
+                            KeyValue::new("http.response.status_code", status),
+                        ],
+                    );
+                }
 
                 match outcome {
                     Outcome::Allow => inner.call(req).await,
