@@ -30,6 +30,12 @@ pub fn build_authorization(jwt_config: JwtConfig) -> AuthorizationLayer {
         .permit_all()
         .request_matcher("/swagger")
         .permit_all()
+        // utoipa-swagger-ui redirects "/swagger" -> "/swagger/" and serves its index
+        // there; "/swagger/{*rest}" alone doesn't match that (matchit's `{*rest}`
+        // wildcard requires a non-empty tail), so the bare trailing-slash path needs
+        // its own exact-match rule.
+        .request_matcher("/swagger/")
+        .permit_all()
         .request_matcher("/swagger/{*rest}")
         .permit_all()
         .request_matcher("/api-docs/{*rest}")

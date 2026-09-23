@@ -10,3 +10,4 @@ documentation = "https://docs.rs/stano-starter-domain"
 
 [dependencies]
 stano-starter    = { workspace = true }
+stano-seaorm     = { workspace = true }
