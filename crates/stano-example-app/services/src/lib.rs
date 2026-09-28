@@ -9,11 +9,13 @@ use stano_di_macros::{component, service};
 use stano_example_domain::{Widget, WidgetId, WidgetRepository};
 
 /// Injectable via `#[component]`; resolved as `Arc<dyn WidgetService>`.
+#[async_trait::async_trait]
 #[component]
 pub trait WidgetService: Send + Sync {
-    fn create(&self, name: String) -> Widget;
-    fn get(&self, id: WidgetId) -> Result<Widget, ServiceError>;
-    fn list(&self) -> Vec<Widget>;
+    async fn create(&self, name: String) -> Result<Widget, ServiceError>;
+    async fn get(&self, id: WidgetId) -> Result<Widget, ServiceError>;
+    async fn list(&self) -> Result<Vec<Widget>, ServiceError>;
+    async fn update(&self, widget: &Widget) -> Result<Widget, ServiceError>;
 }
 
 #[service(dyn WidgetService)]
@@ -21,16 +23,21 @@ pub struct WidgetServiceImpl {
     repo: Arc<dyn WidgetRepository>,
 }
 
+#[async_trait::async_trait]
 impl WidgetService for WidgetServiceImpl {
-    fn create(&self, name: String) -> Widget {
-        self.repo.create(name)
+    async fn create(&self, name: String) -> Result<Widget, ServiceError> {
+        self.repo.create(name).await
     }
 
-    fn get(&self, id: WidgetId) -> Result<Widget, ServiceError> {
-        self.repo.get(id)
+    async fn get(&self, id: WidgetId) -> Result<Widget, ServiceError> {
+        self.repo.get(id).await
     }
 
-    fn list(&self) -> Vec<Widget> {
-        self.repo.list()
+    async fn list(&self) -> Result<Vec<Widget>, ServiceError> {
+        self.repo.list().await
+    }
+
+    async fn update(&self, widget: &Widget) -> Result<Widget, ServiceError> {
+        self.repo.update(widget).await
     }
 }

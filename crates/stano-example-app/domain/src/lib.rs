@@ -1,5 +1,5 @@
 //! Domain layer for the `stano-example-app` demo: the `Widget` entity and the
-//! `WidgetRepository` port that `stano-example-infrastructure` implements.
+//! `WidgetRepository` port that `stano-example-persistence` implements.
 
 use stano_common::ServiceError;
 use stano_di_macros::component;
@@ -13,10 +13,12 @@ pub struct Widget {
 }
 
 /// Injectable via `#[component]`; resolved as `Arc<dyn WidgetRepository>`. Implemented by
-/// `stano-example-infrastructure`'s in-memory adapter.
+/// `stano-example-persistence`'s SeaORM-backed adapter.
+#[async_trait::async_trait]
 #[component]
 pub trait WidgetRepository: Send + Sync {
-    fn create(&self, name: String) -> Widget;
-    fn get(&self, id: WidgetId) -> Result<Widget, ServiceError>;
-    fn list(&self) -> Vec<Widget>;
+    async fn create(&self, name: String) -> Result<Widget, ServiceError>;
+    async fn get(&self, id: WidgetId) -> Result<Widget, ServiceError>;
+    async fn list(&self) -> Result<Vec<Widget>, ServiceError>;
+    async fn update(&self, widget: &Widget) -> Result<Widget, ServiceError>;
 }

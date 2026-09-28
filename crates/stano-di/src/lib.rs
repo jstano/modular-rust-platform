@@ -32,8 +32,8 @@ pub fn register_all(container: &mut container::Container) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Clone)]
     struct LibTestWidget;

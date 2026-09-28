@@ -1,0 +1,21 @@
+[package]
+name = "stano-example-migration"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+name = "migration"
+path = "src/lib.rs"
+
+[[bin]]
+name = "stano-example-migration"
+path = "src/main.rs"
+
+[dependencies]
+sea-orm-migration = { version = "1.1", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "cli",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

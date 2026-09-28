@@ -6,7 +6,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let ctx = build_context();
+    let ctx = build_context().await?;
     let jwt_config = demo_jwt_config();
     let authorization = build_authorization(jwt_config.clone());
 

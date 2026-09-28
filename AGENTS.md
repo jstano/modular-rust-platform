@@ -1,6 +1,6 @@
 # Stano Platform
 
-Reusable Rust library crates for building modular Axum web applications. This repo provides the platform; consuming applications implement their own domain/services/infrastructure/http layers on top of these crates.
+Reusable Rust library crates for building modular Axum web applications. This repo provides the platform; consuming applications implement their own domain/services/persistence/http layers on top of these crates.
 
 ## Workspace
 
@@ -128,7 +128,7 @@ ApiError (HTTP response, 400/401/403/404/409/500)
 | Concern | Rule |
 |---------|------|
 | **IDs** | Use `id_type!(Name, uuid_v4\|uuid_v7)` macro — never raw `Uuid` types. v7 (sortable) for primary entities, v4 (random) for nonces/transient IDs. |
-| **Errors** | `DomainError` in domain code only. Convert to `ServiceError` in services. Let `stano-axum` map to HTTP. Use `anyhow::Error` only inside `ServiceError::Internal` and infrastructure layers. |
+| **Errors** | `DomainError` in domain code only. Convert to `ServiceError` in services. Let `stano-axum` map to HTTP. Use `anyhow::Error` only inside `ServiceError::Internal` and persistence layers. |
 | **Git** | User handles all commits and pushes — do not use `git commit` or `git push`. |
 
 ## Platform Limitations (vs README aspirations)
@@ -146,6 +146,13 @@ cargo clippy                   # Lint (must be zero warnings)
 cargo fmt --check              # Check formatting
 cargo make coverage            # Optional: generate coverage report (Mac/Linux)
 ```
+
+`stano-example-app`'s persistence/launcher integration tests each start their own
+throwaway Postgres via `testcontainers` (no `docker compose up` needed first, cleaned up
+automatically). This needs Docker running; on Colima/Podman/Rancher Desktop rather than
+Docker Desktop, set `DOCKER_HOST` to your active context's socket (`docker context ls`)
+first — `testcontainers` talks to the daemon socket directly, unlike `docker compose`,
+which respects the `docker` CLI's active context automatically.
 
 ---
 

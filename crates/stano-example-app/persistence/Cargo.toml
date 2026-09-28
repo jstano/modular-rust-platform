@@ -1,0 +1,20 @@
+[package]
+name = "stano-example-persistence"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[dependencies]
+stano-example-domain = { path = "../domain" }
+stano-common = { path = "../../stano-common" }
+stano-di = { path = "../../stano-di" }
+stano-di-macros = { path = "../../stano-di-macros" }
+stano-seaorm = { path = "../../stano-seaorm" }
+sea-orm = { version = "1.1", features = ["runtime-tokio-rustls", "sqlx-postgres"] }
+async-trait = "0.1"
+anyhow = "1"
+
+[dev-dependencies]
+stano-example-migration = { path = "../migration" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }

@@ -23,7 +23,7 @@ stano-common = { path = "../stano-common" }
   - `Conflict(String)` — operation conflicts with system state.
   - `Unauthorized` — authentication required.
   - `Forbidden` — operation not allowed for this user/role.
-  - `Internal(anyhow::Error)` — unhandled infrastructure failure.
+  - `Internal(anyhow::Error)` — unhandled persistence failure.
 
 - **`domain_err_to_service(err: DomainError) -> ServiceError`** — converts `DomainError::InvalidInput` → `ServiceError::InvalidInput`, `BusinessRuleViolation` → `ServiceError::Conflict`.
 

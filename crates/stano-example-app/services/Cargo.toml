@@ -9,3 +9,4 @@ stano-example-domain = { path = "../domain" }
 stano-common = { path = "../../stano-common" }
 stano-di = { path = "../../stano-di" }
 stano-di-macros = { path = "../../stano-di-macros" }
+async-trait = "0.1"

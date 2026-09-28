@@ -2,12 +2,12 @@
 
 A set of reusable Rust library crates for building modular web applications. Provides composable, type-safe building blocks for dependency injection, authentication, HTTP routing, and database access.
 
-Apps depend on these crates and implement their own domain/services/infrastructure layers.
+Apps depend on these crates and implement their own domain/services/persistence layers.
 
 ## Architecture
 
 ```
-Your Application (domain, services, infrastructure, http handlers)
+Your Application (domain, services, persistence, http handlers)
     ↓
 stano-launcher (router wiring, middleware, auth, graceful shutdown)
     ↓
@@ -405,7 +405,7 @@ my-app/
     domain/                 # Pure business logic (no external deps)
       mod.rs
       user.rs             # Entity definitions
-    infrastructure/         # Database adapters
+    persistence/            # Database adapters
       mod.rs
       user_repo.rs        # SeaORM repositories + Mapper impls
     services/              # Business orchestration
@@ -427,8 +427,8 @@ my-app/
 | Layer | Purpose | Error Type | External Deps Allowed |
 |---|---|---|---|
 | Domain | Pure business logic | `DomainError` | None |
-| Infrastructure | DB adapters, external services | `anyhow::Error` | SeaORM, HTTP clients |
-| Services | Orchestration, guards | `ServiceError` | Domain, Infra, macros |
+| Persistence | DB adapters, external services | `anyhow::Error` | SeaORM, HTTP clients |
+| Services | Orchestration, guards | `ServiceError` | Domain, Persistence, macros |
 | HTTP | Request/response mapping | `ApiError` | Services, stano-axum, stano-launcher |
 | App (main.rs) | Bootstrap & wiring | `anyhow::Error` | All of the above |
 

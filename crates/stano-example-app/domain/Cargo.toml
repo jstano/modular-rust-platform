@@ -9,3 +9,4 @@ stano-common = { path = "../../stano-common" }
 stano-di = { path = "../../stano-di" }
 stano-di-macros = { path = "../../stano-di-macros" }
 serde = { version = "1", features = ["derive"] }
+async-trait = "0.1"

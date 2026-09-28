@@ -22,10 +22,10 @@
 #![warn(missing_docs)]
 
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
-use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
-use syn::{parse_macro_input, Item, Type};
+use syn::{Item, Type, parse_macro_input};
 
 fn stano_di_path() -> TokenStream2 {
     // A direct dependency on `stano-di` already resolves to the crate itself,
@@ -492,9 +492,10 @@ mod tests {
     #[test]
     fn test_component_impl_dispatches_valid_trait_to_component_trait() {
         let _lock = lock_manifest_dir();
-        let expanded =
-            component_impl(item("pub trait Greeter: Send + Sync { fn greet(&self) -> String; }"))
-                .to_string();
+        let expanded = component_impl(item(
+            "pub trait Greeter: Send + Sync { fn greet(&self) -> String; }",
+        ))
+        .to_string();
         assert!(expanded.contains("DynComponent"));
         assert!(expanded.contains("Injectable"));
     }
@@ -650,7 +651,10 @@ mod tests {
 
     #[test]
     fn test_stano_di_path_falls_back_to_stano_starter_family() {
-        let manifest_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stano_starter_consumer");
+        let manifest_dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/stano_starter_consumer"
+        );
         let _guard = ManifestDirGuard::set(manifest_dir);
         let path = stano_di_path().to_string();
         assert!(path.contains("stano_di"));

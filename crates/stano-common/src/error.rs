@@ -1,7 +1,7 @@
 /// Errors that originate in the domain layer.
 ///
 /// These are typed business errors that carry semantic meaning.
-/// Infrastructure and service layers convert these to their own error types.
+/// Persistence and service layers convert these to their own error types.
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum DomainError {
     /// Input data failed a domain validation rule.

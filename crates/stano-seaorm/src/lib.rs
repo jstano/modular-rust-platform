@@ -7,6 +7,6 @@ mod query_tracing;
 
 pub use db_config::DbConfig;
 pub use mapper::Mapper;
-pub use query_tracing::{query_tracing_config_from_env, QueryTracingConfig};
+pub use query_tracing::{QueryTracingConfig, query_tracing_config_from_env};
 
 pub use sea_orm;

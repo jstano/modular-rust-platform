@@ -7,6 +7,11 @@ use std::sync::Arc;
 use tower::util::BoxCloneSyncService;
 use tower::{Layer, Service};
 
+/// The type-erased async fn `PostAuthorizationHook` wraps: takes the request and the
+/// remaining middleware chain, returns a boxed future resolving to the response.
+type ApplyFn =
+    dyn Fn(Request, Next) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync;
+
 /// An optional middleware hook [`crate::server::run`](../../stano_launcher/fn.run.html)
 /// (in `stano-launcher`) applies immediately after [`AuthorizationLayer`](super::AuthorizationLayer)
 /// in request-flow order — between authorization and the router, closer to handlers.
@@ -18,8 +23,7 @@ use tower::{Layer, Service};
 /// pass `None` to `stano_launcher::run` to skip it; every existing consumer is unaffected.
 #[derive(Clone)]
 pub struct PostAuthorizationHook {
-    apply:
-        Arc<dyn Fn(Request, Next) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>,
+    apply: Arc<ApplyFn>,
 }
 
 impl PostAuthorizationHook {
